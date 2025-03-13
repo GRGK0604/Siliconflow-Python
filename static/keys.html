@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>硅基 KEY 池 - 密钥管理</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.svg">
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --secondary-color: #3b82f6;
+            --success-color: #10b981;
+            --danger-color: #ef4444;
+            --warning-color: #f59e0b;
+            --background-color: #f8fafc;
+            --border-color: #e2e8f0;
+            --text-color: #1e293b;
+            --text-secondary: #64748b;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            margin: 2rem auto;
+            padding: 0 1rem;
+            max-width: 1200px;
+            background-color: var(--background-color);
+            color: var(--text-color);
+        }
+
+        .header-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+        }
+
+        .logo {
+            width: 40px;
+            height: 40px;
+            margin-right: 12px;
+        }
+
+        h1 {
+            color: var(--primary-color);
+            font-size: 2.2rem;
+            margin: 0;
+            font-weight: 600;
+            letter-spacing: -0.5px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .nav-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 0.5rem 0.8rem;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+
+        .nav-link:hover {
+            background-color: rgba(37, 99, 235, 0.1);
+            color: var(--primary-color);
+        }
+
+        .nav-link.active {
+            color: var(--primary-color);
+            font-weight: 500;
+        }
+
+        .logout-btn {
+            color: var(--danger-color);
+            text-decoration: none;
+            padding: 0.5rem 0.8rem;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+
+        .logout-btn:hover {
+            background-color: rgba(239, 68, 68, 0.1);
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+        }
+
+        button {
+            padding: 0.6rem 1.2rem;
+            border: none;
+            border-radius: 6px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .primary {
+            background-color: var(--primary-color);
+            color: white;
+        }
+
+        .primary:hover {
+            background-color: var(--secondary-color);
+        }
+
+        .secondary {
+            background-color: white;
+            color: var(--primary-color);
+            border: 1px solid var(--border-color);
+        }
+
+        .secondary:hover {
+            border-color: var(--primary-color);
+            background-color: rgba(37, 99, 235, 0.05);
+        }
+
+        .danger {
+            background-color: white;
+            color: var(--danger-color);
+            border: 1px solid var(--border-color);
+        }
+
+        .danger:hover {
+            border-color: var(--danger-color);
+            background-color: rgba(239, 68, 68, 0.05);
+        }
+
+        #message {
+            padding: 0.75rem 1rem;
+            border-radius: 6px;
+            margin-bottom: 1.5rem;
+            display: none;
+        }
+
+        #message.success {
+            background-color: rgba(16, 185, 129, 0.1);
+            color: var(--success-color);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        #message.error {
+            background-color: rgba(239, 68, 68, 0.1);
+            color: var(--danger-color);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .stats-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background-color: white;
+            border-radius: 8px;
+            padding: 1.25rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            border: 1px solid var(--border-color);
+        }
+
+        .stat-title {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-value {
+            color: var(--text-color);
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .filter-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            background-color: white;
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .filter-label {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        .filter-input {
+            padding: 0.5rem 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 0.875rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1.5rem;
+            background-color: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+
+        th, td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background-color: rgba(37, 99, 235, 0.05);
+            font-weight: 600;
+            color: var(--text-color);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        th:hover {
+            background-color: rgba(37, 99, 235, 0.1);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .key-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .action-btn {
+            padding: 0.4rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .refresh-btn {
+            background-color: white;
+            color: var(--primary-color);
+            border: 1px solid var(--primary-color);
+        }
+
+        .refresh-btn:hover {
+            background-color: rgba(37, 99, 235, 0.1);
+        }
+
+        .delete-btn {
+            background-color: white;
+            color: var(--danger-color);
+            border: 1px solid var(--danger-color);
+        }
+
+        .delete-btn:hover {
+            background-color: rgba(239, 68, 68, 0.1);
+        }
+
+        .pagination-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .pagination {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .pagination-info {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        .key-display {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .masked-key {
+            cursor: pointer;
+            font-family: monospace;
+        }
+
+        .full-key {
+            font-family: monospace;
+            word-break: break-all;
+        }
+
+        .copy-btn {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 0.25rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+        }
+
+        .copy-btn:hover {
+            background-color: rgba(37, 99, 235, 0.1);
+            color: var(--primary-color);
+            transform: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header-actions">
+        <div class="header-title">
+            <img src="/static/favicon.svg" alt="Logo" class="logo">
+            <h1>硅基 KEY 池 - 密钥管理</h1>
+        </div>
+        <div class="nav-links">
+            <a href="/admin" class="nav-link">首页</a>
+            <a href="/keys" class="nav-link active">密钥管理</a>
+            <a href="/logout" class="logout-btn">退出</a>
+        </div>
+    </div>
+
+    <div class="action-buttons">
+        <button class="primary" onclick="refreshAllKeys()">🔄 刷新所有密钥</button>
+        <button class="secondary" onclick="location.href='/admin'">📥 导入新密钥</button>
+    </div>
+
+    <div id="message"></div>
+
+    <div class="stats-cards">
+        <div class="stat-card">
+            <div class="stat-title">总密钥数量</div>
+            <div class="stat-value" id="totalKeysCount">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-title">总余额</div>
+            <div class="stat-value" id="totalBalance">¥0.00</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-title">平均余额</div>
+            <div class="stat-value" id="avgBalance">¥0.00</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-title">当前页最高余额</div>
+            <div class="stat-value" id="maxBalance">¥0.00</div>
+        </div>
+    </div>
+
+    <div class="filter-container">
+        <div class="filter-group">
+            <span class="filter-label">密钥搜索:</span>
+            <input type="text" id="keyFilter" class="filter-input" placeholder="输入密钥关键字" onkeyup="applyFilters()">
+        </div>
+        <div class="filter-group">
+            <span class="filter-label">排序字段:</span>
+            <select id="sortField" class="filter-input" onchange="changeSorting()">
+                <option value="add_time">添加时间</option>
+                <option value="balance">余额</option>
+                <option value="usage_count">使用次数</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <span class="filter-label">排序方式:</span>
+            <select id="sortOrder" class="filter-input" onchange="changeSorting()">
+                <option value="desc">降序</option>
+                <option value="asc">升序</option>
+            </select>
+        </div>
+    </div>
+
+    <table id="keysTable">
+        <thead>
+            <tr>
+                <th onclick="sortKeys('key')">密钥</th>
+                <th onclick="sortKeys('balance')">余额</th>
+                <th onclick="sortKeys('usage_count')">使用次数</th>
+                <th onclick="sortKeys('add_time')">添加时间</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td colspan="5" style="text-align: center;">加载中...</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="pagination-container">
+        <div class="pagination-info">
+            第 <span id="currentPage">1</span> 页，共 <span id="totalPages">1</span> 页
+        </div>
+        <div class="pagination">
+            <button id="prevPage" onclick="changePage(-1)" disabled>上一页</button>
+            <button id="nextPage" onclick="changePage(1)">下一页</button>
+        </div>
+    </div>
+
+    <script>
+        // 全局变量
+        let currentPage = 1;
+        let totalPages = 1;
+        let currentSortField = 'add_time';
+        let currentSortOrder = 'desc';
+        let keyFilter = '';
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            loadKeys();
+            fetchStats();
+        });
+
+        // 显示消息
+        function showMessage(text, type = 'success') {
+            const messageEl = document.getElementById('message');
+            messageEl.textContent = text;
+            messageEl.className = type;
+            messageEl.style.display = 'block';
+            setTimeout(() => messageEl.style.display = 'none', 3000);
+        }
+
+        // 获取总体统计信息
+        async function fetchStats() {
+            try {
+                const response = await fetch('/stats');
+                if (!response.ok) {
+                    throw new Error('获取统计信息失败');
+                }
+                
+                const data = await response.json();
+                document.getElementById('totalKeysCount').textContent = data.key_count;
+                document.getElementById('totalBalance').textContent = `¥${parseFloat(data.total_balance).toFixed(2)}`;
+                
+                if (data.key_count > 0) {
+                    const avgBalance = parseFloat(data.total_balance) / data.key_count;
+                    document.getElementById('avgBalance').textContent = `¥${avgBalance.toFixed(2)}`;
+                }
+            } catch (error) {
+                console.error('Error fetching stats:', error);
+            }
+        }
+
+        // 加载密钥
+        async function loadKeys() {
+            try {
+                const tbody = document.querySelector("#keysTable tbody");
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">加载中...</td></tr>';
+                
+                // 构建 URL，包含排序和分页参数
+                let url = `/api/keys?page=${currentPage}&sort_field=${currentSortField}&sort_order=${currentSortOrder}`;
+                
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                // 更新分页信息
+                totalPages = Math.ceil(data.total / data.page_size);
+                document.getElementById('currentPage').textContent = currentPage;
+                document.getElementById('totalPages').textContent = totalPages;
+                
+                // 更新分页按钮状态
+                document.getElementById('prevPage').disabled = currentPage <= 1;
+                document.getElementById('nextPage').disabled = currentPage >= totalPages;
+                
+                // 清空表格
+                tbody.innerHTML = '';
+                
+                if (data.keys.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">没有找到密钥</td></tr>';
+                    return;
+                }
+                
+                // 应用搜索过滤器
+                const filteredKeys = keyFilter ? 
+                    data.keys.filter(key => key.key.toLowerCase().includes(keyFilter)) : 
+                    data.keys;
+                
+                if (filteredKeys.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">没有找到匹配的密钥</td></tr>';
+                    return;
+                }
+                
+                // 找出最高余额
+                let maxBalance = 0;
+                filteredKeys.forEach(key => {
+                    const balance = parseFloat(key.balance) || 0;
+                    if (balance > maxBalance) {
+                        maxBalance = balance;
+                    }
+                });
+                document.getElementById('maxBalance').textContent = `¥${maxBalance.toFixed(2)}`;
+                
+                // 更新表头样式
+                document.querySelectorAll('th').forEach(th => {
+                    th.classList.remove('active');
+                    const field = th.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
+                    if (field === currentSortField) {
+                        th.classList.add('active');
+                        th.textContent = th.textContent.replace(/ [↑↓]$/, '');
+                        th.textContent += currentSortOrder === 'asc' ? ' ↑' : ' ↓';
+                    }
+                });
+                
+                // 渲染过滤后的密钥
+                filteredKeys.forEach(key => {
+                    const tr = document.createElement('tr');
+                    tr.setAttribute('data-key', key.key);
+                    
+                    // 格式化密钥显示 - 默认显示掩码版本，但添加复制功能
+                    const maskedKey = `${key.key.substring(0, 8)}...${key.key.substring(key.key.length - 4)}`;
+                    
+                    // 格式化时间
+                    const date = new Date(key.add_time * 1000);
+                    const formattedDate = date.toLocaleString('zh-CN');
+                    
+                    tr.innerHTML = `
+                        <td>
+                            <div class="key-display">
+                                <span class="masked-key" title="点击显示完整密钥" onclick="toggleKeyVisibility(this, '${key.key}')">${maskedKey}</span>
+                                <button class="copy-btn" onclick="copyToClipboard('${key.key}', event)" title="复制密钥">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        </td>
+                        <td>¥${parseFloat(key.balance).toFixed(2)}</td>
+                        <td>${key.usage_count}</td>
+                        <td>${formattedDate}</td>
+                        <td>
+                            <div class="key-actions">
+                                <button class="action-btn refresh-btn" onclick="refreshKey('${key.key}')">刷新</button>
+                                <button class="action-btn delete-btn" onclick="deleteKey('${key.key}')">删除</button>
+                            </div>
+                        </td>
+                    `;
+                    
+                    tbody.appendChild(tr);
+                });
+                
+            } catch (error) {
+                showMessage(error.message, 'error');
+            }
+        }
+
+        // 刷新单个密钥
+        async function refreshKey(key) {
+            try {
+                const response = await fetch('/api/refresh_key', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ key: key })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`刷新失败: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                showMessage(data.message, "success");
+                
+                // 只更新这一行，而不是整个表格
+                const keyRow = document.querySelector(`tr[data-key="${key}"]`);
+                if (keyRow) {
+                    // 获取最新的密钥信息
+                    const keyResponse = await fetch(`/api/key_info?key=${key}`);
+                    if (keyResponse.ok) {
+                        const keyData = await keyResponse.json();
+                        // 更新余额
+                        const balanceCell = keyRow.querySelector('td:nth-child(2)');
+                        if (balanceCell) {
+                            balanceCell.textContent = `¥${parseFloat(keyData.balance).toFixed(2)}`;
+                        }
+                    }
+                }
+                
+                // 更新统计信息
+                fetchStats();
+            } catch (error) {
+                showMessage(`刷新密钥失败: ${error.message}`, "error");
+            }
+        }
+
+        // 删除密钥
+        async function deleteKey(key) {
+            if (!confirm('确定要删除这个密钥吗？')) return;
+            
+            try {
+                const response = await fetch('/api/delete_key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key })
+                });
+                const data = await response.json();
+                showMessage(data.message);
+                loadKeys();
+                fetchStats();
+            } catch (error) {
+                showMessage('删除失败：' + error.message, 'error');
+            }
+        }
+
+        // 刷新所有密钥
+        async function refreshAllKeys() {
+            try {
+                const response = await fetch('/refresh', { method: 'POST' });
+                const data = await response.json();
+                showMessage(data.message);
+                loadKeys();
+                fetchStats();
+            } catch (error) {
+                showMessage('刷新失败：' + error.message, 'error');
+            }
+        }
+
+        // 应用过滤器
+        function applyFilters() {
+            keyFilter = document.getElementById('keyFilter').value.trim().toLowerCase();
+            currentPage = 1;
+            loadKeys();
+        }
+
+        // 更改排序
+        function changeSorting() {
+            currentSortField = document.getElementById('sortField').value;
+            currentSortOrder = document.getElementById('sortOrder').value;
+            currentPage = 1;
+            loadKeys();
+        }
+
+        // 点击表头排序
+        function sortKeys(field) {
+            if (currentSortField === field) {
+                // 切换排序方向
+                currentSortOrder = currentSortOrder === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSortField = field;
+                currentSortOrder = 'desc';
+            }
+            
+            // 更新排序下拉框
+            document.getElementById('sortField').value = currentSortField;
+            document.getElementById('sortOrder').value = currentSortOrder;
+            
+            currentPage = 1;
+            loadKeys();
+        }
+
+        // 更改页码
+        function changePage(delta) {
+            const newPage = currentPage + delta;
+            if (newPage >= 1 && newPage <= totalPages) {
+                currentPage = newPage;
+                loadKeys();
+            }
+        }
+
+        // 切换密钥可见性
+        function toggleKeyVisibility(element, fullKey) {
+            const parent = element.parentElement;
+            if (element.classList.contains('masked-key')) {
+                element.innerHTML = fullKey;
+                element.classList.remove('masked-key');
+                element.classList.add('full-key');
+                element.title = "点击隐藏密钥";
+            } else {
+                const maskedKey = `${fullKey.substring(0, 8)}...${fullKey.substring(fullKey.length - 4)}`;
+                element.innerHTML = maskedKey;
+                element.classList.remove('full-key');
+                element.classList.add('masked-key');
+                element.title = "点击显示完整密钥";
+            }
+        }
+
+        // 修复复制功能
+        function copyToClipboard(text, event) {
+            event.stopPropagation(); // 阻止事件冒泡
+            
+            // 创建一个临时的文本区域元素
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed'; // 避免滚动到底部
+            document.body.appendChild(textarea);
+            textarea.select();
+            
+            try {
+                // 执行复制命令
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    showMessage("密钥已复制到剪贴板", "success");
+                } else {
+                    showMessage("复制失败，请手动复制", "error");
+                }
+            } catch (err) {
+                showMessage("复制失败: " + err, "error");
+                console.error('复制失败:', err);
+            }
+            
+            // 移除临时元素
+            document.body.removeChild(textarea);
+        }
+    </script>
+</body>
+
+</html> 
