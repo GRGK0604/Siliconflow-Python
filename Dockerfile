@@ -12,6 +12,6 @@ COPY *.html ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 暴露端口（根据你的应用实际端口修改）
-EXPOSE 5000
+EXPOSE 7898
 
 CMD ["python", "main.py"]
