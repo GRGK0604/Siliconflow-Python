@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>硅基 KEY 池 - 管理</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.svg">
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --secondary-color: #3b82f6;
+            --success-color: #10b981;
+            --danger-color: #ef4444;
+            --warning-color: #f59e0b;
+            --background-color: #f8fafc;
+            --border-color: #e2e8f0;
+            --text-color: #1e293b;
+            --text-secondary: #64748b;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--background-color);
+            color: var(--text-color);
+        }
+
+        .container {
+            padding: 1rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+        }
+
+        .logo {
+            width: 32px;
+            height: 32px;
+            margin-right: 8px;
+        }
+
+        h1 {
+            color: var(--primary-color);
+            font-size: 1.5rem;
+            margin: 0;
+            font-weight: 600;
+            letter-spacing: -0.5px;
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 1.2rem;
+            }
+            
+            .logo {
+                width: 24px;
+                height: 24px;
+            }
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .nav-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 0.5rem 0.8rem;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+            font-size: 0.9rem;
+        }
+
+        .nav-link:hover {
+            background-color: rgba(37, 99, 235, 0.1);
+            color: var(--primary-color);
+        }
+
+        .nav-link.active {
+            color: var(--primary-color);
+            font-weight: 500;
+        }
+
+        .logout-btn {
+            color: var(--danger-color);
+            text-decoration: none;
+            padding: 0.5rem 0.8rem;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+            font-size: 0.9rem;
+        }
+
+        .logout-btn:hover {
+            background-color: rgba(239, 68, 68, 0.1);
+        }
+
+        h2 {
+            color: var(--text-color);
+            font-size: 1.3rem;
+            margin-top: 1.5rem;
+            margin-bottom: 0.75rem;
+            font-weight: 600;
+        }
+
+        textarea {
+            width: 100%;
+            height: 120px;
+            padding: 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 0.9rem;
+            resize: vertical;
+            margin-bottom: 1rem;
+            box-sizing: border-box;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 6px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 480px) {
+            .button-group {
+                flex-direction: column;
+                width: 100%;
+            }
+            
+            button {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .primary {
+            background-color: var(--primary-color);
+            color: white;
+        }
+
+        .primary:hover {
+            background-color: var(--secondary-color);
+        }
+
+        .secondary {
+            background-color: white;
+            color: var(--primary-color);
+            border: 1px solid var(--primary-color);
+        }
+
+        .secondary:hover {
+            background-color: rgba(37, 99, 235, 0.1);
+        }
+
+        .danger {
+            background-color: white;
+            color: var(--danger-color);
+            border: 1px solid var(--danger-color);
+        }
+
+        .danger:hover {
+            background-color: rgba(239, 68, 68, 0.1);
+        }
+
+        #message {
+            padding: 0.75rem;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+            display: none;
+            font-size: 0.9rem;
+        }
+
+        .success {
+            background-color: rgba(16, 185, 129, 0.1);
+            color: var(--success-color);
+            border: 1px solid var(--success-color);
+            display: block !important;
+        }
+
+        .error {
+            background-color: rgba(239, 68, 68, 0.1);
+            color: var(--danger-color);
+            border: 1px solid var(--danger-color);
+            display: block !important;
+        }
+
+        #stats {
+            background-color: white;
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            margin-bottom: 1.5rem;
+            font-size: 1rem;
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        #stats span {
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+
+        .table-container {
+            overflow-x: auto;
+            margin-bottom: 1rem;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            border: 1px solid var(--border-color);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 0.75rem 0.5rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 0.85rem;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 768px) {
+            th, td {
+                padding: 0.5rem 0.4rem;
+                font-size: 0.8rem;
+            }
+        }
+
+        th {
+            background-color: #f1f5f9;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover td {
+            background-color: #f8fafc;
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            gap: 0.5rem;
+        }
+
+        .pagination button {
+            padding: 0.5rem 1rem;
+            min-width: 5rem;
+            background-color: white;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .pagination button:not(:disabled):hover {
+            border-color: var(--primary-color);
+            color: var(--primary-color);
+        }
+
+        .card {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-top: 0;
+            margin-bottom: 0.75rem;
+            color: var(--text-color);
+        }
+
+        /* 修改表格显示，在小屏幕上优化 */
+        @media (max-width: 640px) {
+            .table-responsive {
+                display: block;
+                width: 100%;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            
+            .key-column {
+                max-width: 100px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+        }
+
+        /* 响应式布局基础设置 */
+        @media (min-width: 769px) {
+            .container {
+                padding: 2rem;
+            }
+            
+            #stats {
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 1rem;
+                padding: 1.5rem;
+            }
+            
+            #stats > div {
+                text-align: center;
+            }
+            
+            .table-container {
+                margin: 2rem 0;
+            }
+            
+            th, td {
+                padding: 1rem;
+                font-size: 1rem;
+            }
+            
+            .button-group {
+                flex-wrap: nowrap;
+            }
+            
+            .button-group button {
+                flex: 0 1 auto;
+            }
+            
+            textarea {
+                height: 150px;
+                font-size: 1rem;
+            }
+        }
+
+        /* 平板端优化 */
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            #stats {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 0.75rem;
+                padding: 1rem;
+            }
+            
+            .table-container {
+                margin: 1rem 0;
+            }
+            
+            th, td {
+                padding: 0.75rem;
+                font-size: 0.9rem;
+            }
+            
+            .button-group {
+                flex-wrap: wrap;
+            }
+            
+            .button-group button {
+                flex: 1 1 calc(50% - 0.5rem);
+            }
+            
+            textarea {
+                height: 120px;
+                font-size: 0.9rem;
+            }
+        }
+
+        /* 移动端优化 */
+        @media (max-width: 480px) {
+            .container {
+                padding: 0.75rem;
+            }
+            
+            #stats {
+                grid-template-columns: 1fr;
+            }
+            
+            .header-actions {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.75rem;
+            }
+            
+            .nav-links {
+                width: 100%;
+                justify-content: space-between;
+            }
+            
+            .button-group {
+                flex-direction: column;
+            }
+            
+            .button-group button {
+                width: 100%;
+                flex: none;
+            }
+            
+            .pagination {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+            
+            .pagination button {
+                width: 100%;
+            }
+            
+            .pagination span {
+                margin: 0.5rem 0;
+            }
+            
+            /* 优化表格在移动端的显示 */
+            .table-responsive {
+                margin: 0 -0.75rem;
+                width: calc(100% + 1.5rem);
+            }
+            
+            .key-column {
+                max-width: 80px;
+            }
+            
+            /* 调整日志表格的列宽 */
+            #logsTable th:nth-child(1),
+            #logsTable td:nth-child(1) {
+                width: 80px;
+            }
+            
+            #logsTable th:nth-child(2),
+            #logsTable td:nth-child(2) {
+                width: 60px;
+            }
+            
+            #logsTable th:nth-child(3),
+            #logsTable td:nth-child(3) {
+                width: 100px;
+            }
+            
+            #logsTable th:nth-child(4),
+            #logsTable td:nth-child(4),
+            #logsTable th:nth-child(5),
+            #logsTable td:nth-child(5),
+            #logsTable th:nth-child(6),
+            #logsTable td:nth-child(6) {
+                width: 60px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header-actions">
+            <div class="header-title">
+                <img src="/static/favicon.svg" alt="Logo" class="logo">
+                <h1>硅基 KEY 池</h1>
+            </div>
+            <div class="nav-links">
+                <a href="/admin" class="nav-link active">控制台</a>
+                <a href="/keys" class="nav-link">密钥管理</a>
+                <a href="/logout" class="logout-btn">退出</a>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">📥 导入 API 密钥</h2>
+            <textarea id="keys" placeholder="每行一个 API 密钥，例如：sk-xxxxxxxxxxxxxxxxxxxxxxxx"></textarea>
+            <div class="button-group">
+                <button class="primary" onclick="importKeys()">📥 导入密钥</button>
+                <button class="secondary" onclick="refreshKeys()">🔄 刷新余额</button>
+                <button class="secondary" onclick="exportKeys()">📤 导出为 TXT</button>
+            </div>
+        </div>
+
+        <div id="message"></div>
+
+        <div id="stats">
+            <div>📊 当前密钥数量：<span id="keyCount">0</span> 个</div>
+            <div>💰 余额总量：<span id="totalBalance">0</span> 元</div>
+            <div>📞 总调用次数：<span id="totalCalls">0</span> 次</div>
+            <div>🔤 总tokens消耗：<span id="totalTokens">0</span></div>
+        </div>
+
+        <h2>📝 最近调用日志</h2>
+        <div class="table-container table-responsive">
+            <table id="logsTable">
+                <thead>
+                    <tr>
+                        <th>密钥</th>
+                        <th>模型</th>
+                        <th>调用时间</th>
+                        <th>输入</th>
+                        <th>输出</th>
+                        <th>总量</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <div class="pagination" id="pagination"></div>
+
+        <div class="button-group">
+            <button class="danger" onclick="clearLogs()">🗑️ 清空日志</button>
+        </div>
+    </div>
+
+    <script>
+        // 检测是否为移动设备
+        const isMobile = window.innerWidth <= 768;
+
+        async function showMessage(text, type = 'success') {
+            const messageEl = document.getElementById('message');
+            messageEl.textContent = text;
+            messageEl.className = type;
+            messageEl.style.display = 'block';
+            setTimeout(() => messageEl.style.display = 'none', 3000);
+        }
+        
+        async function fetchStats() {
+            const response = await fetch("/stats");
+            const data = await response.json();
+            document.getElementById("keyCount").textContent = data.key_count;
+            document.getElementById("totalBalance").textContent = `¥${parseFloat(data.total_balance).toFixed(2)}`;
+            document.getElementById("totalCalls").textContent = data.total_calls || 0;
+            document.getElementById("totalTokens").textContent = data.total_tokens || 0;
+        }
+        
+        async function importKeys() {
+            document.getElementById("message").style.display = 'block';
+            document.getElementById("message").textContent = "正在导入，请稍候...";
+            const keys = document.getElementById("keys").value;
+            const response = await fetch("/import_keys", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ keys })
+            });
+            const data = await response.json();
+            document.getElementById("message").textContent = data.message;
+            fetchStats();
+        }
+        
+        async function refreshKeys() {
+            const messageEl = document.getElementById("message");
+            messageEl.style.display = 'block';
+            messageEl.textContent = "正在刷新，请稍候...";
+            const response = await fetch("/refresh", { method: "POST" });
+            const data = await response.json();
+            messageEl.textContent = data.message;
+            fetchStats();
+        }
+        
+        function exportKeys() {
+            window.location.href = "/export_keys";
+        }
+        
+        // Logs fetching and pagination
+        async function fetchLogs(page = 1) {
+            document.querySelector("#logsTable tbody").innerHTML = `
+                <tr>
+                    <td colspan="6" style="text-align: center;">加载中...</td>
+                </tr>
+            `;
+            
+            try {
+                const response = await fetch(`/logs?page=${page}`);
+                if (!response.ok) {
+                    throw new Error(`获取日志失败: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                const tbody = document.querySelector("#logsTable tbody");
+                tbody.innerHTML = "";
+                
+                if (data.logs.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="6" style="text-align: center;">暂无日志记录</td>
+                        </tr>
+                    `;
+                    return;
+                }
+                
+                data.logs.forEach(log => {
+                    const date = new Date(log.call_time * 1000);
+                    const formattedDate = isMobile ? 
+                        `${String(date.getMonth()+1).padStart(2,'0')}/${String(date.getDate()).padStart(2,'0')} ${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}` 
+                        : date.toLocaleString('zh-CN');
+                    
+                    const tr = document.createElement("tr");
+                    tr.innerHTML = `
+                        <td class="key-column">${log.api_key.substring(0, 6)}...${log.api_key.substring(log.api_key.length - 3)}</td>
+                        <td>${log.model.split('-').pop() || 'N/A'}</td>
+                        <td>${formattedDate}</td>
+                        <td>${log.input_tokens}</td>
+                        <td>${log.output_tokens}</td>
+                        <td>${log.total_tokens}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+                
+                // 更新分页按钮
+                const paginationDiv = document.getElementById("pagination");
+                paginationDiv.innerHTML = "";
+                const totalPages = Math.ceil(data.total / data.page_size);
+                
+                if (totalPages > 1) {
+                    // 使用上一页/下一页按钮
+                    const prevBtn = document.createElement("button");
+                    prevBtn.innerHTML = "&#10094; 上一页";
+                    prevBtn.disabled = data.page === 1;
+                    prevBtn.onclick = () => fetchLogs(data.page - 1);
+                    paginationDiv.appendChild(prevBtn);
+                    
+                    // 显示当前页/总页数
+                    const pageInfo = document.createElement("span");
+                    pageInfo.textContent = `${data.page}/${totalPages}`;
+                    pageInfo.style.margin = "0 10px";
+                    pageInfo.style.display = "flex";
+                    pageInfo.style.alignItems = "center";
+                    paginationDiv.appendChild(pageInfo);
+                    
+                    // 下一页按钮
+                    const nextBtn = document.createElement("button");
+                    nextBtn.innerHTML = "下一页 &#10095;";
+                    nextBtn.disabled = data.page === totalPages;
+                    nextBtn.onclick = () => fetchLogs(data.page + 1);
+                    paginationDiv.appendChild(nextBtn);
+                }
+            } catch (error) {
+                console.error("Error fetching logs:", error);
+                document.querySelector("#logsTable tbody").innerHTML = `
+                    <tr>
+                        <td colspan="6" style="text-align: center;">加载日志失败: ${error.message}</td>
+                    </tr>
+                `;
+            }
+        }
+        
+        async function clearLogs() {
+            if (!confirm("确定要清空所有日志吗？此操作无法撤销。")) return;
+            const response = await fetch("/clear_logs", { method: "POST" });
+            const data = await response.json();
+            showMessage(data.message);
+            fetchLogs();
+        }
+        
+        // 监听窗口大小变化
+        window.addEventListener('resize', function() {
+            const newIsMobile = window.innerWidth <= 768;
+            if (newIsMobile !== isMobile) {
+                // 重新加载页面以应用移动端优化
+                location.reload();
+            }
+        });
+        
+        // Update stats and logs on page load
+        fetchStats();
+        fetchLogs();
+    </script>
+</body>
+
+</html>
