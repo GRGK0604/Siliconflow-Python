@@ -425,6 +425,114 @@
                 text-align: center;
             }
         }
+
+        /* 响应式布局基础设置 */
+        @media (min-width: 769px) {
+            .container {
+                padding: 2rem;
+            }
+            
+            .stats-cards {
+                grid-template-columns: repeat(4, 1fr);
+            }
+            
+            .filter-container {
+                flex-wrap: nowrap;
+            }
+            
+            .filter-group {
+                flex: 1;
+            }
+            
+            .table-container {
+                margin: 2rem 0;
+            }
+            
+            th, td {
+                padding: 1rem;
+                font-size: 1rem;
+            }
+            
+            .key-display {
+                flex-direction: row;
+            }
+            
+            .copy-btn {
+                margin-top: 0;
+            }
+            
+            .action-buttons button {
+                flex: 0 1 auto;
+            }
+        }
+
+        /* 移动端优化 */
+        @media (max-width: 768px) {
+            .container {
+                padding: 0.75rem;
+            }
+            
+            .stats-cards {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .filter-container {
+                flex-direction: column;
+            }
+            
+            .filter-group {
+                width: 100%;
+            }
+            
+            .table-container {
+                margin: 1rem 0;
+            }
+            
+            th, td {
+                padding: 0.75rem;
+                font-size: 0.9rem;
+            }
+            
+            .key-display {
+                flex-direction: column;
+            }
+            
+            .copy-btn {
+                margin-top: 0.5rem;
+            }
+            
+            .action-buttons button {
+                flex: 1;
+                justify-content: center;
+            }
+        }
+
+        /* 小屏幕优化 */
+        @media (max-width: 480px) {
+            .stats-cards {
+                grid-template-columns: 1fr;
+            }
+            
+            .header-actions {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.75rem;
+            }
+            
+            .nav-links {
+                width: 100%;
+                justify-content: space-between;
+            }
+            
+            .pagination-container {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .pagination {
+                justify-content: center;
+            }
+        }
     </style>
 </head>
 
@@ -527,15 +635,60 @@
         let currentSortField = 'add_time';
         let currentSortOrder = 'desc';
         let keyFilter = '';
-
-        // 检测是否为移动设备
-        const isMobile = window.innerWidth <= 768;
+        let isMobile = window.innerWidth <= 768;
 
         // 初始化
         document.addEventListener('DOMContentLoaded', function() {
             loadKeys();
             fetchStats();
+            setupResponsiveHandlers();
         });
+
+        // 设置响应式处理
+        function setupResponsiveHandlers() {
+            // 处理窗口大小变化
+            let resizeTimeout;
+            window.addEventListener('resize', function() {
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(function() {
+                    const newIsMobile = window.innerWidth <= 768;
+                    if (newIsMobile !== isMobile) {
+                        isMobile = newIsMobile;
+                        // 重新加载表格以应用新的布局
+                        loadKeys();
+                    }
+                }, 250);
+            });
+
+            // 为移动端添加触摸支持
+            if (isMobile) {
+                document.querySelectorAll('.action-btn').forEach(btn => {
+                    btn.addEventListener('touchstart', function(e) {
+                        e.preventDefault();
+                        this.click();
+                    });
+                });
+            }
+        }
+
+        // 格式化密钥显示
+        function formatKeyDisplay(key) {
+            if (isMobile) {
+                return `${key.substring(0, 6)}...${key.substring(key.length - 3)}`;
+            } else {
+                return `${key.substring(0, 8)}...${key.substring(key.length - 4)}`;
+            }
+        }
+
+        // 格式化时间显示
+        function formatDate(timestamp) {
+            const date = new Date(timestamp * 1000);
+            if (isMobile) {
+                return `${date.getMonth()+1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`;
+            } else {
+                return date.toLocaleString('zh-CN');
+            }
+        }
 
         // 显示消息
         function showMessage(text, type = 'success') {
@@ -572,22 +725,18 @@
                 const tbody = document.querySelector("#keysTable tbody");
                 tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">加载中...</td></tr>';
                 
-                // 构建 URL，包含排序和分页参数
                 let url = `/api/keys?page=${currentPage}&sort_field=${currentSortField}&sort_order=${currentSortOrder}`;
                 
                 const response = await fetch(url);
                 const data = await response.json();
                 
-                // 更新分页信息
                 totalPages = Math.ceil(data.total / data.page_size);
                 document.getElementById('currentPage').textContent = currentPage;
                 document.getElementById('totalPages').textContent = totalPages;
                 
-                // 更新分页按钮状态
                 document.getElementById('prevPage').disabled = currentPage <= 1;
                 document.getElementById('nextPage').disabled = currentPage >= totalPages;
                 
-                // 清空表格
                 tbody.innerHTML = '';
                 
                 if (data.keys.length === 0) {
@@ -595,7 +744,6 @@
                     return;
                 }
                 
-                // 应用搜索过滤器
                 const filteredKeys = keyFilter ? 
                     data.keys.filter(key => key.key.toLowerCase().includes(keyFilter)) : 
                     data.keys;
@@ -605,7 +753,6 @@
                     return;
                 }
                 
-                // 更新表头样式
                 document.querySelectorAll('th').forEach(th => {
                     th.classList.remove('active');
                     const field = th.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
@@ -616,19 +763,12 @@
                     }
                 });
                 
-                // 渲染过滤后的密钥
                 filteredKeys.forEach(key => {
                     const tr = document.createElement('tr');
                     tr.setAttribute('data-key', key.key);
                     
-                    // 格式化密钥显示 - 默认显示掩码版本，但添加复制功能
-                    const maskedKey = `${key.key.substring(0, 6)}...${key.key.substring(key.key.length - 3)}`;
-                    
-                    // 格式化时间
-                    const date = new Date(key.add_time * 1000);
-                    const formattedDate = isMobile ? 
-                        `${date.getMonth()+1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}` : 
-                        date.toLocaleString('zh-CN');
+                    const maskedKey = formatKeyDisplay(key.key);
+                    const formattedDate = formatDate(key.add_time);
                     
                     tr.innerHTML = `
                         <td>
@@ -784,9 +924,7 @@
                 element.classList.add('full-key');
                 element.title = "点击隐藏密钥";
             } else {
-                const maskedKey = isMobile ? 
-                    `${fullKey.substring(0, 6)}...${fullKey.substring(fullKey.length - 3)}` : 
-                    `${fullKey.substring(0, 8)}...${fullKey.substring(fullKey.length - 4)}`;
+                const maskedKey = formatKeyDisplay(fullKey);
                 element.innerHTML = maskedKey;
                 element.classList.remove('full-key');
                 element.classList.add('masked-key');
@@ -821,15 +959,6 @@
             // 移除临时元素
             document.body.removeChild(textarea);
         }
-
-        // 监听窗口大小变化
-        window.addEventListener('resize', function() {
-            const newIsMobile = window.innerWidth <= 768;
-            if (newIsMobile !== isMobile) {
-                // 重新加载页面以应用移动端优化
-                location.reload();
-            }
-        });
     </script>
 </body>
 
