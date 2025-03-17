@@ -641,7 +641,7 @@
                     const tr = document.createElement("tr");
                     tr.innerHTML = `
                         <td class="key-column">${log.api_key.substring(0, 6)}...${log.api_key.substring(log.api_key.length - 3)}</td>
-                        <td>${log.model.split('-').pop() || 'N/A'}</td>
+                        <td>${log.model || 'N/A'}</td>
                         <td>${formattedDate}</td>
                         <td>${log.input_tokens}</td>
                         <td>${log.output_tokens}</td>
