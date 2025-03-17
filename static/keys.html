@@ -21,18 +21,25 @@
 
         body {
             font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            margin: 2rem auto;
-            padding: 0 1rem;
-            max-width: 1200px;
+            margin: 0;
+            padding: 0;
             background-color: var(--background-color);
             color: var(--text-color);
+        }
+
+        .container {
+            padding: 1rem;
+            max-width: 1200px;
+            margin: 0 auto;
         }
 
         .header-actions {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 2rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .header-title {
@@ -41,22 +48,33 @@
         }
 
         .logo {
-            width: 40px;
-            height: 40px;
-            margin-right: 12px;
+            width: 32px;
+            height: 32px;
+            margin-right: 8px;
         }
 
         h1 {
             color: var(--primary-color);
-            font-size: 2.2rem;
+            font-size: 1.5rem;
             margin: 0;
             font-weight: 600;
             letter-spacing: -0.5px;
         }
 
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 1.2rem;
+            }
+            
+            .logo {
+                width: 24px;
+                height: 24px;
+            }
+        }
+
         .nav-links {
             display: flex;
-            gap: 1rem;
+            gap: 0.5rem;
         }
 
         .nav-link {
@@ -65,6 +83,7 @@
             padding: 0.5rem 0.8rem;
             border-radius: 4px;
             transition: all 0.2s ease;
+            font-size: 0.9rem;
         }
 
         .nav-link:hover {
@@ -83,6 +102,7 @@
             padding: 0.5rem 0.8rem;
             border-radius: 4px;
             transition: all 0.2s ease;
+            font-size: 0.9rem;
         }
 
         .logout-btn:hover {
@@ -92,11 +112,12 @@
         .action-buttons {
             display: flex;
             gap: 0.75rem;
-            margin-bottom: 1.5rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
         }
 
         button {
-            padding: 0.6rem 1.2rem;
+            padding: 0.5rem 1rem;
             border: none;
             border-radius: 6px;
             font-weight: 500;
@@ -105,6 +126,7 @@
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            font-size: 0.9rem;
         }
 
         button:hover {
@@ -149,7 +171,7 @@
         #message {
             padding: 0.75rem 1rem;
             border-radius: 6px;
-            margin-bottom: 1.5rem;
+            margin-bottom: 1rem;
             display: none;
         }
 
@@ -167,38 +189,38 @@
 
         .stats-cards {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-bottom: 2rem;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
         }
 
         .stat-card {
             background-color: white;
             border-radius: 8px;
-            padding: 1.25rem;
+            padding: 1rem;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
             border: 1px solid var(--border-color);
         }
 
         .stat-title {
             color: var(--text-secondary);
-            font-size: 0.875rem;
+            font-size: 0.8rem;
             margin-bottom: 0.5rem;
         }
 
         .stat-value {
             color: var(--text-color);
-            font-size: 1.5rem;
+            font-size: 1.2rem;
             font-weight: 600;
         }
 
         .filter-container {
             display: flex;
             flex-wrap: wrap;
-            gap: 1rem;
-            margin-bottom: 1.5rem;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
             background-color: white;
-            padding: 1rem;
+            padding: 0.75rem;
             border-radius: 8px;
             border: 1px solid var(--border-color);
         }
@@ -207,34 +229,55 @@
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            flex: 1 1 auto;
+        }
+
+        @media (max-width: 768px) {
+            .filter-group {
+                flex: 1 1 100%;
+            }
         }
 
         .filter-label {
             color: var(--text-secondary);
-            font-size: 0.875rem;
+            font-size: 0.8rem;
+            white-space: nowrap;
         }
 
         .filter-input {
-            padding: 0.5rem 0.75rem;
+            padding: 0.5rem;
             border: 1px solid var(--border-color);
             border-radius: 4px;
-            font-size: 0.875rem;
+            font-size: 0.8rem;
+            flex: 1;
+        }
+
+        .table-container {
+            overflow-x: auto;
+            margin-bottom: 1rem;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            border: 1px solid var(--border-color);
         }
 
         table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 1.5rem;
-            background-color: white;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
         }
 
         th, td {
-            padding: 0.75rem 1rem;
+            padding: 0.75rem;
             text-align: left;
             border-bottom: 1px solid var(--border-color);
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 768px) {
+            th, td {
+                padding: 0.5rem;
+                font-size: 0.8rem;
+            }
         }
 
         th {
@@ -243,6 +286,7 @@
             color: var(--text-color);
             cursor: pointer;
             user-select: none;
+            white-space: nowrap;
         }
 
         th:hover {
@@ -255,13 +299,13 @@
 
         .key-actions {
             display: flex;
-            gap: 0.5rem;
+            gap: 0.3rem;
         }
 
         .action-btn {
-            padding: 0.4rem 0.75rem;
+            padding: 0.3rem 0.5rem;
             border-radius: 4px;
-            font-size: 0.875rem;
+            font-size: 0.8rem;
             cursor: pointer;
             transition: all 0.2s ease;
         }
@@ -290,7 +334,9 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 2rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
         }
 
         .pagination {
@@ -298,24 +344,33 @@
             gap: 0.5rem;
         }
 
+        .pagination button {
+            padding: 0.3rem 0.75rem;
+            font-size: 0.9rem;
+        }
+
         .pagination-info {
             color: var(--text-secondary);
-            font-size: 0.875rem;
+            font-size: 0.85rem;
         }
 
         .key-display {
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.3rem;
         }
 
         .masked-key {
             cursor: pointer;
             font-family: monospace;
+            font-size: 0.85rem;
+            word-break: keep-all;
+            white-space: nowrap;
         }
 
         .full-key {
             font-family: monospace;
+            font-size: 0.85rem;
             word-break: break-all;
         }
 
@@ -336,98 +391,132 @@
             color: var(--primary-color);
             transform: none;
         }
+
+        /* 移动端优化 */
+        @media (max-width: 768px) {
+            .key-display {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .copy-btn {
+                align-self: flex-end;
+                margin-top: -1.5rem;
+            }
+            
+            .action-buttons button {
+                flex: 1;
+                justify-content: center;
+            }
+        }
+
+        @media (max-width: 640px) {
+            /* 在小屏幕上隐藏不太重要的列 */
+            .hide-on-mobile {
+                display: none;
+            }
+            
+            .key-actions {
+                flex-direction: column;
+            }
+            
+            .action-btn {
+                width: 100%;
+                text-align: center;
+            }
+        }
     </style>
 </head>
 
 <body>
-    <div class="header-actions">
-        <div class="header-title">
-            <img src="/static/favicon.svg" alt="Logo" class="logo">
-            <h1>硅基 KEY 池 - 密钥管理</h1>
+    <div class="container">
+        <div class="header-actions">
+            <div class="header-title">
+                <img src="/static/favicon.svg" alt="Logo" class="logo">
+                <h1>硅基 KEY 池 - 密钥管理</h1>
+            </div>
+            <div class="nav-links">
+                <a href="/admin" class="nav-link">首页</a>
+                <a href="/keys" class="nav-link active">密钥管理</a>
+                <a href="/logout" class="logout-btn">退出</a>
+            </div>
         </div>
-        <div class="nav-links">
-            <a href="/admin" class="nav-link">首页</a>
-            <a href="/keys" class="nav-link active">密钥管理</a>
-            <a href="/logout" class="logout-btn">退出</a>
-        </div>
-    </div>
 
-    <div class="action-buttons">
-        <button class="primary" onclick="refreshAllKeys()">🔄 刷新所有密钥</button>
-        <button class="secondary" onclick="location.href='/admin'">📥 导入新密钥</button>
-    </div>
+        <div class="action-buttons">
+            <button class="primary" onclick="refreshAllKeys()">🔄 刷新所有密钥</button>
+            <button class="secondary" onclick="location.href='/admin'">📥 导入新密钥</button>
+        </div>
 
-    <div id="message"></div>
+        <div id="message"></div>
 
-    <div class="stats-cards">
-        <div class="stat-card">
-            <div class="stat-title">总密钥数量</div>
-            <div class="stat-value" id="totalKeysCount">0</div>
+        <div class="stats-cards">
+            <div class="stat-card">
+                <div class="stat-title">总密钥数量</div>
+                <div class="stat-value" id="totalKeysCount">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-title">总余额</div>
+                <div class="stat-value" id="totalBalance">¥0.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-title">总调用次数</div>
+                <div class="stat-value" id="totalCallCount">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-title">总tokens消耗</div>
+                <div class="stat-value" id="totalTokens">0</div>
+            </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-title">总余额</div>
-            <div class="stat-value" id="totalBalance">¥0.00</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-title">平均余额</div>
-            <div class="stat-value" id="avgBalance">¥0.00</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-title">总调用次数</div>
-            <div class="stat-value" id="totalCallCount">0</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-title">总tokens消耗</div>
-            <div class="stat-value" id="totalTokens">0</div>
-        </div>
-    </div>
 
-    <div class="filter-container">
-        <div class="filter-group">
-            <span class="filter-label">密钥搜索:</span>
-            <input type="text" id="keyFilter" class="filter-input" placeholder="输入密钥关键字" onkeyup="applyFilters()">
+        <div class="filter-container">
+            <div class="filter-group">
+                <span class="filter-label">密钥搜索:</span>
+                <input type="text" id="keyFilter" class="filter-input" placeholder="输入密钥关键字" onkeyup="applyFilters()">
+            </div>
+            <div class="filter-group">
+                <span class="filter-label">排序字段:</span>
+                <select id="sortField" class="filter-input" onchange="changeSorting()">
+                    <option value="add_time">添加时间</option>
+                    <option value="balance">余额</option>
+                    <option value="usage_count">使用次数</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <span class="filter-label">排序方式:</span>
+                <select id="sortOrder" class="filter-input" onchange="changeSorting()">
+                    <option value="desc">降序</option>
+                    <option value="asc">升序</option>
+                </select>
+            </div>
         </div>
-        <div class="filter-group">
-            <span class="filter-label">排序字段:</span>
-            <select id="sortField" class="filter-input" onchange="changeSorting()">
-                <option value="add_time">添加时间</option>
-                <option value="balance">余额</option>
-                <option value="usage_count">使用次数</option>
-            </select>
-        </div>
-        <div class="filter-group">
-            <span class="filter-label">排序方式:</span>
-            <select id="sortOrder" class="filter-input" onchange="changeSorting()">
-                <option value="desc">降序</option>
-                <option value="asc">升序</option>
-            </select>
-        </div>
-    </div>
 
-    <table id="keysTable">
-        <thead>
-            <tr>
-                <th onclick="sortKeys('key')">密钥</th>
-                <th onclick="sortKeys('balance')">余额</th>
-                <th onclick="sortKeys('usage_count')">使用次数</th>
-                <th onclick="sortKeys('add_time')">添加时间</th>
-                <th>操作</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td colspan="5" style="text-align: center;">加载中...</td>
-            </tr>
-        </tbody>
-    </table>
-
-    <div class="pagination-container">
-        <div class="pagination-info">
-            第 <span id="currentPage">1</span> 页，共 <span id="totalPages">1</span> 页
+        <div class="table-container">
+            <table id="keysTable">
+                <thead>
+                    <tr>
+                        <th onclick="sortKeys('key')">密钥</th>
+                        <th onclick="sortKeys('balance')">余额</th>
+                        <th onclick="sortKeys('usage_count')">使用次数</th>
+                        <th class="hide-on-mobile" onclick="sortKeys('add_time')">添加时间</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td colspan="5" style="text-align: center;">加载中...</td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
-        <div class="pagination">
-            <button id="prevPage" onclick="changePage(-1)" disabled>上一页</button>
-            <button id="nextPage" onclick="changePage(1)">下一页</button>
+
+        <div class="pagination-container">
+            <div class="pagination-info">
+                第 <span id="currentPage">1</span> 页，共 <span id="totalPages">1</span> 页
+            </div>
+            <div class="pagination">
+                <button id="prevPage" class="secondary" onclick="changePage(-1)" disabled>上一页</button>
+                <button id="nextPage" class="secondary" onclick="changePage(1)">下一页</button>
+            </div>
         </div>
     </div>
 
@@ -438,6 +527,9 @@
         let currentSortField = 'add_time';
         let currentSortOrder = 'desc';
         let keyFilter = '';
+
+        // 检测是否为移动设备
+        const isMobile = window.innerWidth <= 768;
 
         // 初始化
         document.addEventListener('DOMContentLoaded', function() {
@@ -468,10 +560,7 @@
                 document.getElementById('totalCallCount').textContent = data.total_calls || 0;
                 document.getElementById('totalTokens').textContent = data.total_tokens || 0;
                 
-                if (data.key_count > 0) {
-                    const avgBalance = parseFloat(data.total_balance) / data.key_count;
-                    document.getElementById('avgBalance').textContent = `¥${avgBalance.toFixed(2)}`;
-                }
+                // 移除平均余额计算逻辑
             } catch (error) {
                 console.error('Error fetching stats:', error);
             }
@@ -523,7 +612,7 @@
                     if (field === currentSortField) {
                         th.classList.add('active');
                         th.textContent = th.textContent.replace(/ [↑↓]$/, '');
-                        th.textContent += currentSortOrder === 'asc' ? ' ↑' : ' ↓';
+                        th.textContent += currentSortField === 'key' ? '' : (currentSortOrder === 'asc' ? ' ↑' : ' ↓');
                     }
                 });
                 
@@ -533,18 +622,20 @@
                     tr.setAttribute('data-key', key.key);
                     
                     // 格式化密钥显示 - 默认显示掩码版本，但添加复制功能
-                    const maskedKey = `${key.key.substring(0, 8)}...${key.key.substring(key.key.length - 4)}`;
+                    const maskedKey = `${key.key.substring(0, 6)}...${key.key.substring(key.key.length - 3)}`;
                     
                     // 格式化时间
                     const date = new Date(key.add_time * 1000);
-                    const formattedDate = date.toLocaleString('zh-CN');
+                    const formattedDate = isMobile ? 
+                        `${date.getMonth()+1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}` : 
+                        date.toLocaleString('zh-CN');
                     
                     tr.innerHTML = `
                         <td>
                             <div class="key-display">
                                 <span class="masked-key" title="点击显示完整密钥" onclick="toggleKeyVisibility(this, '${key.key}')">${maskedKey}</span>
                                 <button class="copy-btn" onclick="copyToClipboard('${key.key}', event)" title="复制密钥">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                                     </svg>
@@ -553,7 +644,7 @@
                         </td>
                         <td>¥${parseFloat(key.balance).toFixed(2)}</td>
                         <td>${key.usage_count}</td>
-                        <td>${formattedDate}</td>
+                        <td class="hide-on-mobile">${formattedDate}</td>
                         <td>
                             <div class="key-actions">
                                 <button class="action-btn refresh-btn" onclick="refreshKey('${key.key}')">刷新</button>
@@ -693,7 +784,9 @@
                 element.classList.add('full-key');
                 element.title = "点击隐藏密钥";
             } else {
-                const maskedKey = `${fullKey.substring(0, 8)}...${fullKey.substring(fullKey.length - 4)}`;
+                const maskedKey = isMobile ? 
+                    `${fullKey.substring(0, 6)}...${fullKey.substring(fullKey.length - 3)}` : 
+                    `${fullKey.substring(0, 8)}...${fullKey.substring(fullKey.length - 4)}`;
                 element.innerHTML = maskedKey;
                 element.classList.remove('full-key');
                 element.classList.add('masked-key');
@@ -701,7 +794,7 @@
             }
         }
 
-        // 修复复制功能
+        // 复制功能
         function copyToClipboard(text, event) {
             event.stopPropagation(); // 阻止事件冒泡
             
@@ -728,6 +821,15 @@
             // 移除临时元素
             document.body.removeChild(textarea);
         }
+
+        // 监听窗口大小变化
+        window.addEventListener('resize', function() {
+            const newIsMobile = window.innerWidth <= 768;
+            if (newIsMobile !== isMobile) {
+                // 重新加载页面以应用移动端优化
+                location.reload();
+            }
+        });
     </script>
 </body>
 
