@@ -373,8 +373,12 @@
             <div class="stat-value" id="avgBalance">¥0.00</div>
         </div>
         <div class="stat-card">
-            <div class="stat-title">当前页最高余额</div>
-            <div class="stat-value" id="maxBalance">¥0.00</div>
+            <div class="stat-title">总调用次数</div>
+            <div class="stat-value" id="totalCallCount">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-title">总tokens消耗</div>
+            <div class="stat-value" id="totalTokens">0</div>
         </div>
     </div>
 
@@ -461,6 +465,8 @@
                 const data = await response.json();
                 document.getElementById('totalKeysCount').textContent = data.key_count;
                 document.getElementById('totalBalance').textContent = `¥${parseFloat(data.total_balance).toFixed(2)}`;
+                document.getElementById('totalCallCount').textContent = data.total_calls || 0;
+                document.getElementById('totalTokens').textContent = data.total_tokens || 0;
                 
                 if (data.key_count > 0) {
                     const avgBalance = parseFloat(data.total_balance) / data.key_count;
@@ -509,16 +515,6 @@
                     tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">没有找到匹配的密钥</td></tr>';
                     return;
                 }
-                
-                // 找出最高余额
-                let maxBalance = 0;
-                filteredKeys.forEach(key => {
-                    const balance = parseFloat(key.balance) || 0;
-                    if (balance > maxBalance) {
-                        maxBalance = balance;
-                    }
-                });
-                document.getElementById('maxBalance').textContent = `¥${maxBalance.toFixed(2)}`;
                 
                 // 更新表头样式
                 document.querySelectorAll('th').forEach(th => {
@@ -735,4 +731,4 @@
     </script>
 </body>
 
-</html> 
+</html>
