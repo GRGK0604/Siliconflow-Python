@@ -635,11 +635,29 @@ async def list_models(request: Request):
 
 @app.get("/stats")
 async def stats(authorized: bool = Depends(require_auth)):
-    with get_cursor() as cursor:
-        cursor.execute("SELECT COUNT(*), COALESCE(SUM(balance), 0) FROM api_keys")
-        count, total_balance = cursor.fetchone()
-    
-    return JSONResponse({"key_count": count, "total_balance": total_balance})
+    try:
+        with get_cursor() as cursor:
+            # 获取密钥数量和总余额
+            cursor.execute("SELECT COUNT(*), COALESCE(SUM(balance), 0) FROM api_keys")
+            key_count, total_balance = cursor.fetchone()
+            
+            # 获取总调用次数（logs表中的记录数）
+            cursor.execute("SELECT COUNT(*) FROM logs")
+            total_calls = cursor.fetchone()[0]
+            
+            # 获取总tokens消耗（logs表中total_tokens字段的总和）
+            cursor.execute("SELECT COALESCE(SUM(total_tokens), 0) FROM logs")
+            total_tokens = cursor.fetchone()[0]
+        
+        return JSONResponse({
+            "key_count": key_count, 
+            "total_balance": total_balance,
+            "total_calls": total_calls,
+            "total_tokens": total_tokens
+        })
+    except Exception as e:
+        print(f"获取统计信息时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取统计信息失败: {str(e)}")
 
 
 @app.get("/export_keys")
