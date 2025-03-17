@@ -34,6 +34,7 @@
             width: 100%;
             max-width: 500px;
             text-align: center;
+            margin: 1rem;
         }
 
         .error-icon {
@@ -72,6 +73,53 @@
         .button:hover {
             background-color: var(--secondary-color);
             transform: translateY(-2px);
+        }
+
+        @media (max-width: 480px) {
+            .error-container {
+                padding: 1.5rem;
+                margin: 0.5rem;
+            }
+
+            .error-icon {
+                font-size: 3rem;
+            }
+
+            h1 {
+                font-size: 1.5rem;
+            }
+
+            p {
+                font-size: 0.95rem;
+            }
+
+            .button {
+                padding: 0.7rem 1.2rem;
+                font-size: 0.95rem;
+            }
+        }
+
+        @media (min-width: 1200px) {
+            .error-container {
+                max-width: 550px;
+            }
+
+            .error-icon {
+                font-size: 5rem;
+            }
+
+            h1 {
+                font-size: 2rem;
+            }
+
+            p {
+                font-size: 1.05rem;
+            }
+
+            .button {
+                padding: 0.9rem 1.8rem;
+                font-size: 1.05rem;
+            }
         }
     </style>
 </head>
