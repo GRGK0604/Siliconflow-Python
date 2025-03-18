@@ -794,8 +794,11 @@
         }
         
         async function importKeys() {
-            document.getElementById("message").style.display = 'block';
-            document.getElementById("message").textContent = "正在导入，请稍候...";
+            const messageEl = document.getElementById("message");
+            messageEl.textContent = "正在导入，请稍候...";
+            messageEl.className = "success";
+            messageEl.style.display = 'block';
+            
             const keys = document.getElementById("keys").value;
             const response = await fetch("/import_keys", {
                 method: "POST",
@@ -803,14 +806,16 @@
                 body: JSON.stringify({ keys })
             });
             const data = await response.json();
-            document.getElementById("message").textContent = data.message;
+            messageEl.textContent = data.message;
             fetchStats();
         }
         
         async function refreshKeys() {
             const messageEl = document.getElementById("message");
-            messageEl.style.display = 'block';
             messageEl.textContent = "正在刷新，请稍候...";
+            messageEl.className = "success";
+            messageEl.style.display = 'block';
+            
             const response = await fetch("/refresh", { method: "POST" });
             const data = await response.json();
             messageEl.textContent = data.message;
