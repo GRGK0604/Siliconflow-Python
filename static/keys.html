@@ -1053,6 +1053,11 @@
         // 刷新单个密钥
         async function refreshKey(key) {
             try {
+                const messageEl = document.getElementById("message");
+                messageEl.textContent = "正在刷新，请稍候...";
+                messageEl.className = "success";
+                messageEl.style.display = 'block';
+                
                 const response = await fetch('/api/refresh_key', {
                     method: 'POST',
                     headers: {
@@ -1066,7 +1071,7 @@
                 }
                 
                 const data = await response.json();
-                showMessage(data.message, "success");
+                messageEl.textContent = data.message;
                 
                 // 只更新这一行，而不是整个表格
                 const keyRow = document.querySelector(`tr[data-key="${key}"]`);
@@ -1093,9 +1098,15 @@
         // 刷新所有密钥
         async function refreshAllKeys() {
             try {
+                const messageEl = document.getElementById("message");
+                messageEl.textContent = "正在刷新所有密钥，请稍候...";
+                messageEl.className = "success";
+                messageEl.style.display = 'block';
+                
                 const response = await fetch('/refresh', { method: 'POST' });
                 const data = await response.json();
-                showMessage(data.message);
+                messageEl.textContent = data.message;
+                
                 loadKeys();
                 fetchStats();
             } catch (error) {

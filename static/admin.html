@@ -696,6 +696,22 @@
 
             <section class="section">
                 <h2 class="section-title">📝 最近调用日志</h2>
+                
+                <!-- Add search box for model filtering -->
+                <div class="filter-container" style="display: flex; margin-bottom: var(--spacing-lg); background-color: var(--bg-secondary); padding: var(--spacing-md); border-radius: var(--radius-md); border: 1px solid var(--border-color); box-shadow: var(--card-shadow);">
+                    <div style="display: flex; align-items: center; gap: var(--spacing-sm); flex: 1;">
+                        <label for="modelFilter" style="color: var(--text-secondary); font-size: 0.875rem; white-space: nowrap; font-weight: 500;">模型搜索:</label>
+                        <input type="text" id="modelFilter" style="padding: var(--spacing-sm); background-color: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); font-size: 0.875rem; flex: 1; transition: var(--transition);" placeholder="输入模型名称进行筛选" onkeyup="if(event.key === 'Enter') applyModelFilter()">
+                        <button onclick="applyModelFilter()" class="btn-secondary" style="padding: var(--spacing-sm) var(--spacing-md); margin-left: 8px;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            </svg>
+                            搜索
+                        </button>
+                    </div>
+                </div>
+                
                 <div class="table-container">
                     <table id="logsTable">
                         <thead>
@@ -806,7 +822,17 @@
         }
         
         // Logs fetching and pagination
+        let currentPage = 1;
+        let modelFilter = '';
+        
+        function applyModelFilter() {
+            modelFilter = document.getElementById('modelFilter').value.trim();
+            currentPage = 1;
+            fetchLogs(currentPage);
+        }
+        
         async function fetchLogs(page = 1) {
+            currentPage = page;
             document.querySelector("#logsTable tbody").innerHTML = `
                 <tr>
                     <td colspan="6" style="text-align: center;">加载中...</td>
@@ -814,7 +840,12 @@
             `;
             
             try {
-                const response = await fetch(`/logs?page=${page}`);
+                let url = `/logs?page=${page}`;
+                if (modelFilter) {
+                    url += `&model=${encodeURIComponent(modelFilter)}`;
+                }
+                
+                const response = await fetch(url);
                 if (!response.ok) {
                     throw new Error(`获取日志失败: ${response.status}`);
                 }
@@ -894,7 +925,7 @@
             const response = await fetch("/clear_logs", { method: "POST" });
             const data = await response.json();
             showMessage(data.message);
-            fetchLogs();
+            fetchLogs(1);
         }
         
         // 监听窗口大小变化
