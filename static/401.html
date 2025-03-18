@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>需要登录 - 硅基 KEY 池</title>
-    <link rel="icon" type="image/x-icon" href="/static/favicon.svg">
+    <link rel="icon" type="image/x-icon" href="/static/logo.png">
     <style>
         :root {
             --primary-color: #2563eb;
@@ -37,7 +37,6 @@
             width: 100%;
             max-width: 500px;
             text-align: center;
-            margin: 1rem;
         }
 
         .logo {
@@ -84,69 +83,12 @@
         .button:active {
             transform: translateY(0);
         }
-
-        @media (max-width: 480px) {
-            .error-container {
-                padding: 1.5rem;
-                margin: 0.5rem;
-            }
-
-            .logo {
-                width: 48px;
-                height: 48px;
-            }
-
-            .error-icon {
-                font-size: 3rem;
-            }
-
-            h1 {
-                font-size: 1.5rem;
-            }
-
-            p {
-                font-size: 0.95rem;
-            }
-
-            .button {
-                padding: 0.7rem 1.2rem;
-                font-size: 0.95rem;
-            }
-        }
-
-        @media (min-width: 1200px) {
-            .error-container {
-                max-width: 550px;
-            }
-
-            .logo {
-                width: 72px;
-                height: 72px;
-            }
-
-            .error-icon {
-                font-size: 5rem;
-            }
-
-            h1 {
-                font-size: 2rem;
-            }
-
-            p {
-                font-size: 1.05rem;
-            }
-
-            .button {
-                padding: 0.9rem 1.8rem;
-                font-size: 1.05rem;
-            }
-        }
     </style>
 </head>
 
 <body>
     <div class="error-container">
-        <img src="/static/favicon.svg" alt="Logo" class="logo">
+        <img src="/static/logo.png" alt="Logo" class="logo">
         <div class="error-icon">🔒</div>
         <h1>需要登录</h1>
         <p>您正在尝试访问需要身份验证的页面。请先登录以继续访问。</p>

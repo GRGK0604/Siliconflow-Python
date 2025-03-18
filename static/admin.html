@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>硅基 KEY 池 - 管理</title>
-    <link rel="icon" type="image/x-icon" href="/static/favicon.svg">
+    <link rel="icon" type="image/x-icon" href="/static/logo.png">
     <style>
         :root {
             /* Light theme colors */
@@ -597,7 +597,7 @@
         <div class="container">
             <div class="header-content">
                 <div class="header-title">
-                    <img src="/static/favicon.svg" alt="Logo" class="logo">
+                    <img src="/static/logo.png" alt="Logo" class="logo">
                     <h1 class="app-title">硅基 KEY 池</h1>
                 </div>
                 <div class="nav-actions">
@@ -931,6 +931,7 @@
             const data = await response.json();
             showMessage(data.message);
             fetchLogs(1);
+            fetchStats();
         }
         
         // 监听窗口大小变化
