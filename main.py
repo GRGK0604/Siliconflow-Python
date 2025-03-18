@@ -47,7 +47,8 @@ with get_cursor() as cursor:
         key TEXT PRIMARY KEY,
         add_time REAL,
         balance REAL,
-        usage_count INTEGER
+        usage_count INTEGER,
+        enabled INTEGER DEFAULT 1
     )
     """)
 
@@ -763,7 +764,7 @@ async def get_keys(
             "key": row[0],
             "add_time": row[1],
             "balance": row[2],
-            "usage_count": row[3],
+            "usage_count": row[3]
         }
         for row in keys
     ]
@@ -794,21 +795,6 @@ async def refresh_single_key(request: Request, authorized: bool = Depends(requir
         with get_cursor() as cursor:
             cursor.execute("DELETE FROM api_keys WHERE key = ?", (key,))
         raise HTTPException(status_code=400, detail="密钥无效或余额为零，已从系统中移除")
-
-@app.post("/api/delete_key")
-async def delete_key(request: Request, authorized: bool = Depends(require_auth)):
-    data = await request.json()
-    key = data.get("key")
-
-    if not key:
-        raise HTTPException(status_code=400, detail="未提供API密钥")
-
-    try:
-        with get_cursor() as cursor:
-            cursor.execute("DELETE FROM api_keys WHERE key = ?", (key,))
-        return JSONResponse({"message": "密钥已成功删除"})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"删除密钥失败: {str(e)}")
 
 @app.get("/api/key_info")
 async def get_key_info(key: str, authorized: bool = Depends(require_auth)):
