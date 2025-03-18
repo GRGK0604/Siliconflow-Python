@@ -488,6 +488,7 @@
         .key-actions {
             display: flex;
             gap: var(--spacing-sm);
+            flex-wrap: wrap;
         }
 
         .action-btn {
@@ -510,17 +511,6 @@
 
         .refresh-btn:hover {
             background-color: var(--accent-primary-light);
-            transform: translateY(-1px);
-        }
-
-        .delete-btn {
-            background-color: var(--bg-secondary);
-            color: var(--danger-color);
-            border: 1px solid var(--danger-color);
-        }
-
-        .delete-btn:hover {
-            background-color: var(--danger-bg);
             transform: translateY(-1px);
         }
 
@@ -648,6 +638,16 @@
             .copy-btn {
                 align-self: flex-end;
                 margin-top: -1.5rem;
+            }
+            
+            .key-actions {
+                flex-direction: column;
+                gap: var(--spacing-md);
+            }
+            
+            .key-status {
+                width: 100%;
+                justify-content: space-between;
             }
             
             th, td {
@@ -1038,7 +1038,6 @@
                         <td>
                             <div class="key-actions">
                                 <button class="action-btn refresh-btn" onclick="refreshKey('${key.key}')">刷新</button>
-                                <button class="action-btn delete-btn" onclick="deleteKey('${key.key}')">删除</button>
                             </div>
                         </td>
                     `;
@@ -1088,25 +1087,6 @@
                 fetchStats();
             } catch (error) {
                 showMessage(`刷新密钥失败: ${error.message}`, "error");
-            }
-        }
-
-        // 删除密钥
-        async function deleteKey(key) {
-            if (!confirm('确定要删除这个密钥吗？')) return;
-            
-            try {
-                const response = await fetch('/api/delete_key', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ key })
-                });
-                const data = await response.json();
-                showMessage(data.message);
-                loadKeys();
-                fetchStats();
-            } catch (error) {
-                showMessage('删除失败：' + error.message, 'error');
             }
         }
 
