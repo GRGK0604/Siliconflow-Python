@@ -8,27 +8,44 @@
     <link rel="icon" type="image/x-icon" href="/static/favicon.svg">
     <style>
         :root {
-            --primary-color: #2563eb;
-            --secondary-color: #3b82f6;
+            --primary-color: #3b82f6;
+            --primary-dark: #2563eb;
+            --primary-light: #60a5fa;
+            --secondary-color: #8b5cf6;
             --success-color: #10b981;
             --danger-color: #ef4444;
             --warning-color: #f59e0b;
             --background-color: #f8fafc;
+            --card-bg: #ffffff;
             --border-color: #e2e8f0;
             --text-color: #1e293b;
             --text-secondary: #64748b;
+            --radius-sm: 6px;
+            --radius-md: 8px;
+            --radius-lg: 12px;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --transition: all 0.2s ease;
+            --font-sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
         }
 
         body {
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            font-family: var(--font-sans);
             margin: 0;
             padding: 0;
             background-color: var(--background-color);
             color: var(--text-color);
+            line-height: 1.5;
         }
 
         .container {
-            padding: 1rem;
+            padding: 1.5rem;
             max-width: 1200px;
             margin: 0 auto;
         }
@@ -37,7 +54,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 1.5rem;
+            margin-bottom: 2rem;
             flex-wrap: wrap;
             gap: 1rem;
         }
@@ -45,20 +62,19 @@
         .header-title {
             display: flex;
             align-items: center;
+            gap: 0.75rem;
         }
 
         .logo {
-            width: 32px;
-            height: 32px;
-            margin-right: 8px;
+            width: 36px;
+            height: 36px;
         }
 
         h1 {
-            color: var(--primary-color);
-            font-size: 1.5rem;
-            margin: 0;
+            color: var(--primary-dark);
+            font-size: 1.75rem;
             font-weight: 600;
-            letter-spacing: -0.5px;
+            letter-spacing: -0.025em;
         }
 
         @media (max-width: 768px) {
@@ -74,63 +90,71 @@
 
         .nav-links {
             display: flex;
-            gap: 0.5rem;
+            gap: 0.75rem;
+            background-color: var(--card-bg);
+            padding: 0.25rem;
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-sm);
         }
 
         .nav-link {
             color: var(--text-secondary);
             text-decoration: none;
-            padding: 0.5rem 0.8rem;
-            border-radius: 4px;
-            transition: all 0.2s ease;
+            padding: 0.625rem 1rem;
+            border-radius: var(--radius-sm);
+            transition: var(--transition);
             font-size: 0.9rem;
+            font-weight: 500;
         }
 
         .nav-link:hover {
-            background-color: rgba(37, 99, 235, 0.1);
             color: var(--primary-color);
+            background-color: rgba(59, 130, 246, 0.08);
         }
 
         .nav-link.active {
             color: var(--primary-color);
-            font-weight: 500;
+            background-color: rgba(59, 130, 246, 0.12);
+            font-weight: 600;
         }
 
         .logout-btn {
             color: var(--danger-color);
             text-decoration: none;
-            padding: 0.5rem 0.8rem;
-            border-radius: 4px;
-            transition: all 0.2s ease;
+            padding: 0.625rem 1rem;
+            border-radius: var(--radius-sm);
+            transition: var(--transition);
             font-size: 0.9rem;
+            font-weight: 500;
         }
 
         .logout-btn:hover {
-            background-color: rgba(239, 68, 68, 0.1);
+            background-color: rgba(239, 68, 68, 0.08);
         }
 
         .action-buttons {
             display: flex;
             gap: 0.75rem;
-            margin-bottom: 1rem;
+            margin-bottom: 1.5rem;
             flex-wrap: wrap;
         }
 
         button {
-            padding: 0.5rem 1rem;
+            padding: 0.625rem 1.25rem;
             border: none;
-            border-radius: 6px;
+            border-radius: var(--radius-sm);
             font-weight: 500;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: var(--transition);
             display: flex;
             align-items: center;
             gap: 0.5rem;
-            font-size: 0.9rem;
+            font-size: 0.95rem;
         }
 
         button:hover {
             transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         button:active {
@@ -143,7 +167,7 @@
         }
 
         .primary:hover {
-            background-color: var(--secondary-color);
+            background-color: var(--primary-dark);
         }
 
         .secondary {
@@ -154,7 +178,7 @@
 
         .secondary:hover {
             border-color: var(--primary-color);
-            background-color: rgba(37, 99, 235, 0.05);
+            background-color: rgba(59, 130, 246, 0.05);
         }
 
         .danger {
@@ -169,10 +193,17 @@
         }
 
         #message {
-            padding: 0.75rem 1rem;
-            border-radius: 6px;
-            margin-bottom: 1rem;
+            padding: 1rem;
+            border-radius: var(--radius-sm);
+            margin-bottom: 1.5rem;
             display: none;
+            font-size: 0.95rem;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         #message.success {
@@ -189,40 +220,88 @@
 
         .stats-cards {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 0.75rem;
-            margin-bottom: 1.5rem;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+            margin-bottom: 2rem;
         }
 
         .stat-card {
-            background-color: white;
-            border-radius: 8px;
-            padding: 1rem;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            background-color: var(--card-bg);
+            border-radius: var(--radius-md);
+            padding: 1.5rem;
+            box-shadow: var(--shadow-sm);
             border: 1px solid var(--border-color);
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
         }
 
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .stat-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            flex-shrink: 0;
+            font-size: 1.5rem;
+        }
+
+        .stat-icon-users {
+            background-color: #f3e8ff;
+            color: #9333ea;
+        }
+
+        .stat-icon-active {
+            background-color: #dcfce7;
+            color: #16a34a;
+        }
+
+        .stat-icon-calls {
+            background-color: #fff7ed;
+            color: #ea580c;
+        }
+
+        .stat-icon-tokens {
+            background-color: #e0f2fe;
+            color: #0284c7;
+        }
+        
+        .stat-content {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        
         .stat-title {
             color: var(--text-secondary);
-            font-size: 0.8rem;
-            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+            margin-bottom: 0.25rem;
         }
-
+        
         .stat-value {
+            font-weight: 700;
             color: var(--text-color);
-            font-size: 1.2rem;
-            font-weight: 600;
+            font-size: 1.75rem;
+            line-height: 1.2;
         }
 
         .filter-container {
             display: flex;
             flex-wrap: wrap;
             gap: 0.75rem;
-            margin-bottom: 1rem;
-            background-color: white;
-            padding: 0.75rem;
-            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            background-color: var(--card-bg);
+            padding: 1rem;
+            border-radius: var(--radius-md);
             border: 1px solid var(--border-color);
+            box-shadow: var(--shadow-sm);
         }
 
         .filter-group {
@@ -232,32 +311,34 @@
             flex: 1 1 auto;
         }
 
-        @media (max-width: 768px) {
-            .filter-group {
-                flex: 1 1 100%;
-            }
-        }
-
         .filter-label {
             color: var(--text-secondary);
-            font-size: 0.8rem;
+            font-size: 0.85rem;
             white-space: nowrap;
+            font-weight: 500;
         }
 
         .filter-input {
-            padding: 0.5rem;
+            padding: 0.625rem;
             border: 1px solid var(--border-color);
-            border-radius: 4px;
-            font-size: 0.8rem;
+            border-radius: var(--radius-sm);
+            font-size: 0.9rem;
             flex: 1;
+            transition: var(--transition);
+        }
+
+        .filter-input:focus {
+            outline: none;
+            border-color: var(--primary-light);
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
         }
 
         .table-container {
             overflow-x: auto;
-            margin-bottom: 1rem;
-            background-color: white;
-            border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            margin-bottom: 1.5rem;
+            background-color: var(--card-bg);
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-sm);
             border: 1px solid var(--border-color);
         }
 
@@ -267,21 +348,14 @@
         }
 
         th, td {
-            padding: 0.75rem;
+            padding: 0.875rem 1rem;
             text-align: left;
             border-bottom: 1px solid var(--border-color);
-            font-size: 0.9rem;
-        }
-
-        @media (max-width: 768px) {
-            th, td {
-                padding: 0.5rem;
-                font-size: 0.8rem;
-            }
+            font-size: 0.95rem;
         }
 
         th {
-            background-color: rgba(37, 99, 235, 0.05);
+            background-color: rgba(59, 130, 246, 0.05);
             font-weight: 600;
             color: var(--text-color);
             cursor: pointer;
@@ -290,24 +364,31 @@
         }
 
         th:hover {
-            background-color: rgba(37, 99, 235, 0.1);
+            background-color: rgba(59, 130, 246, 0.1);
         }
 
         tr:last-child td {
             border-bottom: none;
         }
 
+        tr:hover td {
+            background-color: rgba(59, 130, 246, 0.03);
+        }
+
         .key-actions {
             display: flex;
-            gap: 0.3rem;
+            gap: 0.5rem;
         }
 
         .action-btn {
-            padding: 0.3rem 0.5rem;
-            border-radius: 4px;
-            font-size: 0.8rem;
+            padding: 0.4rem 0.75rem;
+            border-radius: var(--radius-sm);
+            font-size: 0.85rem;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
         }
 
         .refresh-btn {
@@ -317,7 +398,8 @@
         }
 
         .refresh-btn:hover {
-            background-color: rgba(37, 99, 235, 0.1);
+            background-color: rgba(59, 130, 246, 0.08);
+            transform: translateY(-1px);
         }
 
         .delete-btn {
@@ -327,7 +409,8 @@
         }
 
         .delete-btn:hover {
-            background-color: rgba(239, 68, 68, 0.1);
+            background-color: rgba(239, 68, 68, 0.08);
+            transform: translateY(-1px);
         }
 
         .pagination-container {
@@ -335,42 +418,55 @@
             justify-content: space-between;
             align-items: center;
             flex-wrap: wrap;
-            gap: 0.5rem;
-            margin-bottom: 1.5rem;
+            gap: 0.75rem;
+            margin-bottom: 2rem;
         }
 
         .pagination {
             display: flex;
-            gap: 0.5rem;
+            gap: 0.75rem;
         }
 
         .pagination button {
-            padding: 0.3rem 0.75rem;
+            padding: 0.5rem 1.25rem;
+            min-width: 5.5rem;
+            background-color: white;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
             font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
         }
 
         .pagination-info {
             color: var(--text-secondary);
-            font-size: 0.85rem;
+            font-size: 0.9rem;
         }
 
         .key-display {
             display: flex;
             align-items: center;
-            gap: 0.3rem;
+            gap: 0.5rem;
         }
 
         .masked-key {
             cursor: pointer;
             font-family: monospace;
-            font-size: 0.85rem;
+            font-size: 0.9rem;
             word-break: keep-all;
             white-space: nowrap;
+            transition: var(--transition);
         }
 
         .full-key {
             font-family: monospace;
-            font-size: 0.85rem;
+            font-size: 0.9rem;
             word-break: break-all;
         }
 
@@ -383,17 +479,59 @@
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            border-radius: 4px;
+            border-radius: var(--radius-sm);
+            transition: var(--transition);
         }
 
         .copy-btn:hover {
-            background-color: rgba(37, 99, 235, 0.1);
+            background-color: rgba(59, 130, 246, 0.1);
             color: var(--primary-color);
             transform: none;
         }
 
-        /* 移动端优化 */
+        /* 响应式布局 */
+        @media (max-width: 992px) {
+            .container {
+                padding: 1.25rem;
+            }
+            
+            .stats-cards {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 0.75rem;
+            }
+            
+            .filter-container {
+                flex-wrap: wrap;
+            }
+            
+            .filter-group {
+                flex: 1 1 calc(50% - 0.75rem);
+            }
+        }
+
         @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            h1 {
+                font-size: 1.5rem;
+            }
+            
+            .logo {
+                width: 32px;
+                height: 32px;
+            }
+            
+            .nav-links {
+                flex-grow: 1;
+                justify-content: space-between;
+            }
+            
+            .filter-group {
+                flex: 1 1 100%;
+            }
+            
             .key-display {
                 flex-direction: column;
                 align-items: flex-start;
@@ -408,9 +546,37 @@
                 flex: 1;
                 justify-content: center;
             }
+            
+            th, td {
+                padding: 0.75rem 0.5rem;
+                font-size: 0.85rem;
+            }
         }
 
-        @media (max-width: 640px) {
+        @media (max-width: 576px) {
+            .header-actions {
+                flex-direction: column;
+                align-items: flex-start;
+                margin-bottom: 1.5rem;
+            }
+            
+            .nav-links {
+                width: 100%;
+            }
+            
+            .stats-cards {
+                grid-template-columns: 1fr;
+            }
+            
+            .action-buttons {
+                flex-direction: column;
+                width: 100%;
+            }
+            
+            .action-buttons button {
+                width: 100%;
+            }
+            
             /* 在小屏幕上隐藏不太重要的列 */
             .hide-on-mobile {
                 display: none;
@@ -423,105 +589,7 @@
             .action-btn {
                 width: 100%;
                 text-align: center;
-            }
-        }
-
-        /* 响应式布局基础设置 */
-        @media (min-width: 769px) {
-            .container {
-                padding: 2rem;
-            }
-            
-            .stats-cards {
-                grid-template-columns: repeat(4, 1fr);
-            }
-            
-            .filter-container {
-                flex-wrap: nowrap;
-            }
-            
-            .filter-group {
-                flex: 1;
-            }
-            
-            .table-container {
-                margin: 2rem 0;
-            }
-            
-            th, td {
-                padding: 1rem;
-                font-size: 1rem;
-            }
-            
-            .key-display {
-                flex-direction: row;
-            }
-            
-            .copy-btn {
-                margin-top: 0;
-            }
-            
-            .action-buttons button {
-                flex: 0 1 auto;
-            }
-        }
-
-        /* 移动端优化 */
-        @media (max-width: 768px) {
-            .container {
-                padding: 0.75rem;
-            }
-            
-            .stats-cards {
-                grid-template-columns: repeat(2, 1fr);
-            }
-            
-            .filter-container {
-                flex-direction: column;
-            }
-            
-            .filter-group {
-                width: 100%;
-            }
-            
-            .table-container {
-                margin: 1rem 0;
-            }
-            
-            th, td {
-                padding: 0.75rem;
-                font-size: 0.9rem;
-            }
-            
-            .key-display {
-                flex-direction: column;
-            }
-            
-            .copy-btn {
-                margin-top: 0.5rem;
-            }
-            
-            .action-buttons button {
-                flex: 1;
                 justify-content: center;
-            }
-        }
-
-        /* 小屏幕优化 */
-        @media (max-width: 480px) {
-            .stats-cards {
-                grid-template-columns: 1fr;
-            }
-            
-            .header-actions {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 0.75rem;
-            }
-            
-            .nav-links {
-                width: 100%;
-                justify-content: space-between;
             }
             
             .pagination-container {
@@ -531,6 +599,10 @@
             
             .pagination {
                 justify-content: center;
+            }
+            
+            .pagination button {
+                flex: 1;
             }
         }
     </style>
@@ -559,20 +631,54 @@
 
         <div class="stats-cards">
             <div class="stat-card">
-                <div class="stat-title">总密钥数量</div>
-                <div class="stat-value" id="totalKeysCount">0</div>
+                <div class="stat-icon stat-icon-users">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="8.5" cy="7" r="4"></circle>
+                        <path d="M20 8h2a4 4 0 0 1-4 4h-3.1"></path>
+                        <path d="M15 21H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2z"></path>
+                    </svg>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-title">总密钥数量</div>
+                    <div class="stat-value" id="totalKeysCount">0</div>
+                </div>
             </div>
             <div class="stat-card">
-                <div class="stat-title">总余额</div>
-                <div class="stat-value" id="totalBalance">¥0.00</div>
+                <div class="stat-icon stat-icon-active">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 22C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10-4.48 10-10 10z"></path>
+                        <path d="M12 16c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z"></path>
+                    </svg>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-title">总余额</div>
+                    <div class="stat-value" id="totalBalance">¥0.00</div>
+                </div>
             </div>
             <div class="stat-card">
-                <div class="stat-title">总调用次数</div>
-                <div class="stat-value" id="totalCallCount">0</div>
+                <div class="stat-icon stat-icon-calls">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-2.08 19.58 19.58 0 0 1-6-2 2 2 0 0 1-2-2v-3a2 2 0 0 1 2.18-2 19.79 19.79 0 0 1 8.63 2.08 19.58 19.58 0 0 1 6 2 2 2 0 0 1 2 2z"></path>
+                        <path d="M22 10.24A2 2 0 0 1 20.18 8 19.79 19.79 0 0 1 12 6C5.21 4.92 2 8.14 2 12c0 3.86 3.21 7.08 10 8.14"></path>
+                    </svg>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-title">总调用次数</div>
+                    <div class="stat-value" id="totalCallCount">0</div>
+                </div>
             </div>
             <div class="stat-card">
-                <div class="stat-title">总tokens消耗</div>
-                <div class="stat-value" id="totalTokens">0</div>
+                <div class="stat-icon stat-icon-tokens">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 12.79A2 2 0 0 0 19 15v2a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-2.08 19.58 19.58 0 0 1-6-2 2 2 0 0 1-2-2v-3a2 2 0 0 1 2.18-2 19.79 19.79 0 0 1 8.63 2.08 19.58 19.58 0 0 1 6 2 2 2 0 0 1 2 2z"></path>
+                        <path d="M12 16c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z"></path>
+                    </svg>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-title">总tokens消耗</div>
+                    <div class="stat-value" id="totalTokens">0</div>
+                </div>
             </div>
         </div>
 
@@ -712,8 +818,6 @@
                 document.getElementById('totalBalance').textContent = `¥${parseFloat(data.total_balance).toFixed(2)}`;
                 document.getElementById('totalCallCount').textContent = data.total_calls || 0;
                 document.getElementById('totalTokens').textContent = data.total_tokens || 0;
-                
-                // 移除平均余额计算逻辑
             } catch (error) {
                 console.error('Error fetching stats:', error);
             }

@@ -8,27 +8,44 @@
     <link rel="icon" type="image/x-icon" href="/static/favicon.svg">
     <style>
         :root {
-            --primary-color: #2563eb;
-            --secondary-color: #3b82f6;
+            --primary-color: #3b82f6;
+            --primary-dark: #2563eb;
+            --primary-light: #60a5fa;
+            --secondary-color: #8b5cf6;
             --success-color: #10b981;
             --danger-color: #ef4444;
             --warning-color: #f59e0b;
             --background-color: #f8fafc;
+            --card-bg: #ffffff;
             --border-color: #e2e8f0;
             --text-color: #1e293b;
             --text-secondary: #64748b;
+            --radius-sm: 6px;
+            --radius-md: 8px;
+            --radius-lg: 12px;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --transition: all 0.2s ease;
+            --font-sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
         }
 
         body {
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            font-family: var(--font-sans);
             margin: 0;
             padding: 0;
             background-color: var(--background-color);
             color: var(--text-color);
+            line-height: 1.5;
         }
 
         .container {
-            padding: 1rem;
+            padding: 1.5rem;
             max-width: 1200px;
             margin: 0 auto;
         }
@@ -37,133 +54,124 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 1.5rem;
+            margin-bottom: 2rem;
             flex-wrap: wrap;
-            gap: 0.5rem;
+            gap: 1rem;
         }
 
         .header-title {
             display: flex;
             align-items: center;
+            gap: 0.75rem;
         }
 
         .logo {
-            width: 32px;
-            height: 32px;
-            margin-right: 8px;
+            width: 36px;
+            height: 36px;
         }
 
         h1 {
-            color: var(--primary-color);
-            font-size: 1.5rem;
-            margin: 0;
+            color: var(--primary-dark);
+            font-size: 1.75rem;
             font-weight: 600;
-            letter-spacing: -0.5px;
-        }
-
-        @media (max-width: 768px) {
-            h1 {
-                font-size: 1.2rem;
-            }
-            
-            .logo {
-                width: 24px;
-                height: 24px;
-            }
+            letter-spacing: -0.025em;
         }
 
         .nav-links {
             display: flex;
-            gap: 0.5rem;
+            gap: 0.75rem;
+            background-color: var(--card-bg);
+            padding: 0.25rem;
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-sm);
         }
 
         .nav-link {
             color: var(--text-secondary);
             text-decoration: none;
-            padding: 0.5rem 0.8rem;
-            border-radius: 4px;
-            transition: all 0.2s ease;
+            padding: 0.625rem 1rem;
+            border-radius: var(--radius-sm);
+            transition: var(--transition);
             font-size: 0.9rem;
+            font-weight: 500;
         }
 
         .nav-link:hover {
-            background-color: rgba(37, 99, 235, 0.1);
             color: var(--primary-color);
+            background-color: rgba(59, 130, 246, 0.08);
         }
 
         .nav-link.active {
             color: var(--primary-color);
-            font-weight: 500;
+            background-color: rgba(59, 130, 246, 0.12);
+            font-weight: 600;
         }
 
         .logout-btn {
             color: var(--danger-color);
             text-decoration: none;
-            padding: 0.5rem 0.8rem;
-            border-radius: 4px;
-            transition: all 0.2s ease;
+            padding: 0.625rem 1rem;
+            border-radius: var(--radius-sm);
+            transition: var(--transition);
             font-size: 0.9rem;
+            font-weight: 500;
         }
 
         .logout-btn:hover {
-            background-color: rgba(239, 68, 68, 0.1);
+            background-color: rgba(239, 68, 68, 0.08);
         }
 
         h2 {
             color: var(--text-color);
-            font-size: 1.3rem;
+            font-size: 1.35rem;
             margin-top: 1.5rem;
-            margin-bottom: 0.75rem;
+            margin-bottom: 1rem;
             font-weight: 600;
         }
 
         textarea {
             width: 100%;
             height: 120px;
-            padding: 0.75rem;
+            padding: 1rem;
             border: 1px solid var(--border-color);
-            border-radius: 6px;
+            border-radius: var(--radius-sm);
             font-family: monospace;
-            font-size: 0.9rem;
+            font-size: 0.95rem;
             resize: vertical;
-            margin-bottom: 1rem;
+            margin-bottom: 1.25rem;
             box-sizing: border-box;
+            transition: var(--transition);
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: var(--primary-light);
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
         }
 
         .button-group {
             display: flex;
-            gap: 0.5rem;
-            margin-bottom: 1rem;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
             flex-wrap: wrap;
         }
 
         button {
-            padding: 0.5rem 1rem;
+            padding: 0.625rem 1.25rem;
             border: none;
-            border-radius: 6px;
+            border-radius: var(--radius-sm);
             font-weight: 500;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: var(--transition);
             display: flex;
             align-items: center;
             gap: 0.5rem;
-            font-size: 0.9rem;
-        }
-
-        @media (max-width: 480px) {
-            .button-group {
-                flex-direction: column;
-                width: 100%;
-            }
-            
-            button {
-                width: 100%;
-                justify-content: center;
-            }
+            font-size: 0.95rem;
         }
 
         button:hover {
             transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         button:active {
@@ -176,7 +184,7 @@
         }
 
         .primary:hover {
-            background-color: var(--secondary-color);
+            background-color: var(--primary-dark);
         }
 
         .secondary {
@@ -186,7 +194,7 @@
         }
 
         .secondary:hover {
-            background-color: rgba(37, 99, 235, 0.1);
+            background-color: rgba(59, 130, 246, 0.08);
         }
 
         .danger {
@@ -196,55 +204,183 @@
         }
 
         .danger:hover {
-            background-color: rgba(239, 68, 68, 0.1);
+            background-color: rgba(239, 68, 68, 0.08);
         }
 
         #message {
-            padding: 0.75rem;
-            border-radius: 6px;
-            margin-bottom: 1rem;
+            padding: 1rem;
+            border-radius: var(--radius-sm);
+            margin-bottom: 1.5rem;
             display: none;
-            font-size: 0.9rem;
+            font-size: 0.95rem;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         .success {
             background-color: rgba(16, 185, 129, 0.1);
             color: var(--success-color);
-            border: 1px solid var(--success-color);
+            border: 1px solid rgba(16, 185, 129, 0.2);
             display: block !important;
         }
 
         .error {
             background-color: rgba(239, 68, 68, 0.1);
             color: var(--danger-color);
-            border: 1px solid var(--danger-color);
+            border: 1px solid rgba(239, 68, 68, 0.2);
             display: block !important;
         }
 
         #stats {
-            background-color: white;
-            padding: 1rem;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background-color: var(--card-bg);
+            padding: 1.5rem;
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--border-color);
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .stat-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 48px;
+            height: 48px;
             border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-            margin-bottom: 1.5rem;
-            font-size: 1rem;
-            color: var(--text-color);
+            flex-shrink: 0;
+            font-size: 1.5rem;
+        }
+
+        .stat-icon-users {
+            background-color: #f3e8ff;
+            color: #9333ea;
+        }
+
+        .stat-icon-active {
+            background-color: #dcfce7;
+            color: #16a34a;
+        }
+
+        .stat-icon-calls {
+            background-color: #fff7ed;
+            color: #ea580c;
+        }
+
+        .stat-icon-tokens {
+            background-color: #e0f2fe;
+            color: #0284c7;
+        }
+        
+        .stat-content {
             display: flex;
             flex-direction: column;
+            align-items: flex-start;
+        }
+        
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-bottom: 0.25rem;
+        }
+        
+        .stat-value {
+            font-weight: 700;
+            color: var(--text-color);
+            font-size: 1.75rem;
+            line-height: 1.2;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-sm);
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-top: 0;
+            margin-bottom: 1rem;
+            color: var(--text-color);
+            display: flex;
+            align-items: center;
             gap: 0.5rem;
         }
 
-        #stats span {
-            font-weight: 600;
-            color: var(--primary-color);
+        .search-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .search-container textarea {
+            margin-bottom: 0;
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--border-color);
+            min-height: 120px;
+            font-size: 1rem;
+            transition: all 0.2s ease;
+        }
+
+        .search-container textarea:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+        }
+
+        .search-container .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            margin-bottom: 0;
+        }
+
+        .search-container .button-group button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            flex: 1;
+            min-width: 120px;
+            border-radius: var(--radius-md);
+            font-weight: 500;
+            padding: 0.75rem 1rem;
+            transition: all 0.2s ease;
+        }
+
+        .search-container .button-group button:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
         }
 
         .table-container {
             overflow-x: auto;
-            margin-bottom: 1rem;
-            background-color: white;
-            border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            margin-bottom: 1.5rem;
+            background-color: var(--card-bg);
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-sm);
             border: 1px solid var(--border-color);
         }
 
@@ -254,24 +390,16 @@
         }
 
         th, td {
-            padding: 0.75rem 0.5rem;
+            padding: 0.875rem 1rem;
             text-align: left;
             border-bottom: 1px solid var(--border-color);
-            font-size: 0.85rem;
-            white-space: nowrap;
-        }
-
-        @media (max-width: 768px) {
-            th, td {
-                padding: 0.5rem 0.4rem;
-                font-size: 0.8rem;
-            }
+            font-size: 0.95rem;
         }
 
         th {
-            background-color: #f1f5f9;
+            background-color: rgba(59, 130, 246, 0.05);
             font-weight: 600;
-            color: var(--text-secondary);
+            color: var(--text-color);
         }
 
         tr:last-child td {
@@ -279,29 +407,32 @@
         }
 
         tr:hover td {
-            background-color: #f8fafc;
+            background-color: rgba(59, 130, 246, 0.03);
         }
 
         .pagination {
             display: flex;
             justify-content: center;
             align-items: center;
-            margin-bottom: 1.5rem;
-            gap: 0.5rem;
+            margin-bottom: 2rem;
+            gap: 0.75rem;
         }
 
         .pagination button {
-            padding: 0.5rem 1rem;
-            min-width: 5rem;
+            padding: 0.5rem 1.25rem;
+            min-width: 5.5rem;
             background-color: white;
             border: 1px solid var(--border-color);
-            border-radius: 4px;
+            border-radius: var(--radius-sm);
             font-size: 0.9rem;
+            font-weight: 500;
         }
 
         .pagination button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
         }
 
         .pagination button:not(:disabled):hover {
@@ -309,190 +440,94 @@
             color: var(--primary-color);
         }
 
-        .card {
-            background-color: white;
-            border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-            padding: 1rem;
-            margin-bottom: 1.5rem;
+        .key-column {
+            font-family: monospace;
+            max-width: 150px;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
-        .card-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-            margin-top: 0;
-            margin-bottom: 0.75rem;
-            color: var(--text-color);
-        }
-
-        /* 修改表格显示，在小屏幕上优化 */
-        @media (max-width: 640px) {
-            .table-responsive {
-                display: block;
-                width: 100%;
-                overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
-            }
-            
-            .key-column {
-                max-width: 100px;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-        }
-
-        /* 响应式布局基础设置 */
-        @media (min-width: 769px) {
+        /* 响应式布局 */
+        @media (max-width: 992px) {
             .container {
-                padding: 2rem;
+                padding: 1.25rem;
             }
             
             #stats {
-                display: grid;
-                grid-template-columns: repeat(4, 1fr);
-                gap: 1rem;
-                padding: 1.5rem;
-            }
-            
-            #stats > div {
-                text-align: center;
-            }
-            
-            .table-container {
-                margin: 2rem 0;
-            }
-            
-            th, td {
-                padding: 1rem;
-                font-size: 1rem;
-            }
-            
-            .button-group {
-                flex-wrap: nowrap;
-            }
-            
-            .button-group button {
-                flex: 0 1 auto;
-            }
-            
-            textarea {
-                height: 150px;
-                font-size: 1rem;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 0.75rem;
             }
         }
 
-        /* 平板端优化 */
         @media (max-width: 768px) {
             .container {
                 padding: 1rem;
             }
             
-            #stats {
-                display: grid;
-                grid-template-columns: repeat(2, 1fr);
-                gap: 0.75rem;
-                padding: 1rem;
+            h1 {
+                font-size: 1.5rem;
             }
             
-            .table-container {
-                margin: 1rem 0;
+            .logo {
+                width: 32px;
+                height: 32px;
+            }
+            
+            .nav-links {
+                flex-grow: 1;
+                justify-content: space-between;
             }
             
             th, td {
-                padding: 0.75rem;
+                padding: 0.75rem 0.5rem;
+                font-size: 0.85rem;
+            }
+            
+            button {
                 font-size: 0.9rem;
-            }
-            
-            .button-group {
-                flex-wrap: wrap;
-            }
-            
-            .button-group button {
-                flex: 1 1 calc(50% - 0.5rem);
-            }
-            
-            textarea {
-                height: 120px;
-                font-size: 0.9rem;
+                padding: 0.5rem 1rem;
             }
         }
 
-        /* 移动端优化 */
-        @media (max-width: 480px) {
-            .container {
-                padding: 0.75rem;
+        @media (max-width: 576px) {
+            .header-actions {
+                flex-direction: column;
+                align-items: flex-start;
+                margin-bottom: 1.5rem;
+            }
+            
+            .nav-links {
+                width: 100%;
+            }
+            
+            .button-group {
+                flex-direction: column;
+                width: 100%;
+            }
+            
+            .button-group button {
+                width: 100%;
+            }
+            
+            .search-container .button-group {
+                flex-direction: column;
+            }
+            
+            .search-container .button-group button {
+                width: 100%;
             }
             
             #stats {
                 grid-template-columns: 1fr;
             }
             
-            .header-actions {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 0.75rem;
-            }
-            
-            .nav-links {
-                width: 100%;
-                justify-content: space-between;
-            }
-            
-            .button-group {
-                flex-direction: column;
-            }
-            
-            .button-group button {
-                width: 100%;
-                flex: none;
-            }
-            
             .pagination {
                 flex-direction: column;
-                gap: 0.5rem;
+                width: 100%;
             }
             
             .pagination button {
                 width: 100%;
-            }
-            
-            .pagination span {
-                margin: 0.5rem 0;
-            }
-            
-            /* 优化表格在移动端的显示 */
-            .table-responsive {
-                margin: 0 -0.75rem;
-                width: calc(100% + 1.5rem);
-            }
-            
-            .key-column {
-                max-width: 80px;
-            }
-            
-            /* 调整日志表格的列宽 */
-            #logsTable th:nth-child(1),
-            #logsTable td:nth-child(1) {
-                width: 80px;
-            }
-            
-            #logsTable th:nth-child(2),
-            #logsTable td:nth-child(2) {
-                width: 60px;
-            }
-            
-            #logsTable th:nth-child(3),
-            #logsTable td:nth-child(3) {
-                width: 100px;
-            }
-            
-            #logsTable th:nth-child(4),
-            #logsTable td:nth-child(4),
-            #logsTable th:nth-child(5),
-            #logsTable td:nth-child(5),
-            #logsTable th:nth-child(6),
-            #logsTable td:nth-child(6) {
-                width: 60px;
             }
         }
     </style>
@@ -514,25 +549,78 @@
 
         <div class="card">
             <h2 class="card-title">📥 导入 API 密钥</h2>
-            <textarea id="keys" placeholder="每行一个 API 密钥，例如：sk-xxxxxxxxxxxxxxxxxxxxxxxx"></textarea>
-            <div class="button-group">
-                <button class="primary" onclick="importKeys()">📥 导入密钥</button>
-                <button class="secondary" onclick="refreshKeys()">🔄 刷新余额</button>
-                <button class="secondary" onclick="exportKeys()">📤 导出为 TXT</button>
+            <div class="search-container">
+                <textarea id="keys" placeholder="每行一个 API 密钥，例如：sk-xxxxxxxxxxxxxxxxxxxxxxxx"></textarea>
+                <div class="button-group">
+                    <button class="primary" onclick="importKeys()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        导入密钥
+                    </button>
+                    <button class="secondary" onclick="refreshKeys()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"></path>
+                        </svg>
+                        刷新余额
+                    </button>
+                    <button class="secondary" onclick="exportKeys()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        导出为 TXT
+                    </button>
+                </div>
             </div>
         </div>
 
         <div id="message"></div>
 
         <div id="stats">
-            <div>📊 当前密钥数量：<span id="keyCount">0</span> 个</div>
-            <div>💰 余额总量：<span id="totalBalance">0</span> 元</div>
-            <div>📞 总调用次数：<span id="totalCalls">0</span> 次</div>
-            <div>🔤 总tokens消耗：<span id="totalTokens">0</span></div>
+            <div class="stat-card">
+                <div class="stat-icon stat-icon-users">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle></svg>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-label">总账号数</div>
+                    <div class="stat-value" id="keyCount">0</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon stat-icon-active">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-label">总余额</div>
+                    <div class="stat-value" id="totalBalance">¥0.00</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon stat-icon-calls">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-label">总使用次数</div>
+                    <div class="stat-value" id="totalCalls">0</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon stat-icon-tokens">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="15" rx="2"></rect><polyline points="17 2 12 7 7 2"></polyline></svg>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-label">总消耗次数</div>
+                    <div class="stat-value" id="totalTokens">0</div>
+                </div>
+            </div>
         </div>
 
         <h2>📝 最近调用日志</h2>
-        <div class="table-container table-responsive">
+        <div class="table-container">
             <table id="logsTable">
                 <thead>
                     <tr>
@@ -570,10 +658,10 @@
         async function fetchStats() {
             const response = await fetch("/stats");
             const data = await response.json();
-            document.getElementById("keyCount").textContent = data.key_count;
-            document.getElementById("totalBalance").textContent = `¥${parseFloat(data.total_balance).toFixed(2)}`;
-            document.getElementById("totalCalls").textContent = data.total_calls || 0;
-            document.getElementById("totalTokens").textContent = data.total_tokens || 0;
+            document.getElementById("keyCount").textContent = Math.floor(data.key_count || 0);
+            document.getElementById("totalBalance").textContent = `¥${parseFloat(data.total_balance || 0).toFixed(2)}`;
+            document.getElementById("totalCalls").textContent = Math.floor(data.total_calls || 0);
+            document.getElementById("totalTokens").textContent = Math.floor(data.total_tokens || 0);
         }
         
         async function importKeys() {
