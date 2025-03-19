@@ -8,58 +8,102 @@
     <link rel="icon" type="image/x-icon" href="/static/logo.png">
     <style>
         :root {
-            --primary-color: #2563eb;
-            --secondary-color: #3b82f6;
-            --background-color: #f8fafc;
-            --text-color: #1e293b;
-            --error-color: #ef4444;
-            --border-color: #e2e8f0;
-            --text-secondary: #64748b;
+            /* Color Palette */
+            --primary-color: #4f46e5;
+            --primary-hover: #4338ca;
+            --primary-light: rgba(79, 70, 229, 0.1);
+            --success-color: #10b981;
+            --danger-color: #ef4444;
+            --warning-color: #f59e0b;
+            --background-color: #f9fafb;
+            --surface-color: #ffffff;
+            --border-color: #e5e7eb;
+            --text-primary: #111827;
+            --text-secondary: #6b7280;
+            --text-tertiary: #9ca3af;
+            
+            /* Typography */
+            --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            
+            /* Spacing */
+            --space-xs: 0.25rem;
+            --space-sm: 0.5rem;
+            --space-md: 1rem;
+            --space-lg: 1.5rem;
+            --space-xl: 2rem;
+            --space-2xl: 2.5rem;
+            
+            /* Borders */
+            --radius-sm: 0.375rem;
+            --radius-md: 0.5rem;
+            --radius-lg: 0.75rem;
+            --radius-xl: 1rem;
+            
+            /* Shadows */
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
         }
 
         body {
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            margin: 0;
-            padding: 0;
+            font-family: var(--font-sans);
+            background-color: var(--background-color);
+            color: var(--text-primary);
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
-            background-color: var(--background-color);
-            color: var(--text-color);
+            min-height: 100vh;
+            padding: var(--space-md);
+            line-height: 1.5;
+            background-image: linear-gradient(135deg, #f5f7ff 0%, #f1f4ff 100%);
         }
 
         .error-container {
-            background-color: white;
-            border-radius: 12px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-            padding: 2.5rem;
+            background-color: var(--surface-color);
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow-lg);
+            padding: var(--space-2xl);
             width: 100%;
-            max-width: 500px;
+            max-width: 420px;
             text-align: center;
+            position: relative;
         }
 
         .logo {
-            width: 64px;
-            height: 64px;
-            margin-bottom: 1rem;
+            width: 56px;
+            height: 56px;
+            margin-bottom: var(--space-lg);
+            border-radius: var(--radius-md);
         }
 
         .error-icon {
-            font-size: 4rem;
-            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 80px;
+            height: 80px;
+            margin: 0 auto var(--space-lg);
+            background-color: var(--primary-light);
             color: var(--primary-color);
+            border-radius: 50%;
+            font-size: 2.5rem;
         }
 
         h1 {
-            color: var(--primary-color);
-            font-size: 1.8rem;
-            margin-bottom: 1rem;
+            color: var(--text-primary);
+            font-size: 1.5rem;
+            margin-bottom: var(--space-md);
             font-weight: 600;
         }
 
         p {
-            margin-bottom: 2rem;
+            margin-bottom: var(--space-xl);
             line-height: 1.6;
             color: var(--text-secondary);
         }
@@ -70,13 +114,15 @@
             background-color: var(--primary-color);
             color: white;
             text-decoration: none;
-            border-radius: 6px;
+            border-radius: var(--radius-md);
             font-weight: 500;
             transition: all 0.2s;
+            border: none;
+            cursor: pointer;
         }
 
         .button:hover {
-            background-color: var(--secondary-color);
+            background-color: var(--primary-hover);
             transform: translateY(-1px);
         }
 
