@@ -13,11 +13,16 @@ import json
 import secrets
 from contextlib import contextmanager
 from uvicorn.config import LOGGING_CONFIG
+from datetime import datetime, timedelta
 
 LOGGING_CONFIG["formatters"]["default"]["fmt"] = (
     "%(asctime)s - %(levelprefix)s %(message)s"
 )
 
+# 日志清理配置
+LOG_AUTO_CLEAN = True  # 是否启用自动清理日志
+LOG_RETENTION_DAYS = 30  # 保留最近30天的日志
+LOG_CLEAN_INTERVAL_HOURS = 24  # 每24小时清理一次
 
 app = FastAPI()
 
@@ -76,6 +81,40 @@ with get_cursor() as cursor:
 
 BASE_URL = "https://api.siliconflow.cn"  # adjust if needed
 
+# 自动清理日志的函数
+async def auto_clean_logs():
+    """定时清理过期的日志记录"""
+    while True:
+        try:
+            if LOG_AUTO_CLEAN:
+                # 计算保留日志的时间戳（当前时间减去保留天数）
+                retention_timestamp = time.time() - (LOG_RETENTION_DAYS * 86400)  # 86400秒 = 1天
+                
+                with get_cursor() as cursor:
+                    # 删除旧日志
+                    cursor.execute("DELETE FROM logs WHERE call_time < ?", (retention_timestamp,))
+                    deleted_count = cursor.rowcount
+                
+                # 记录清理操作
+                if deleted_count > 0:
+                    print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - 自动清理日志：已删除 {deleted_count} 条过期日志记录")
+                    
+                    # 整理数据库文件以回收磁盘空间
+                    if deleted_count > 100:  # 只有在删除了大量记录时才执行VACUUM
+                        with get_cursor() as cursor:
+                            cursor.execute("VACUUM")
+            
+            # 等待下一次执行
+            await asyncio.sleep(LOG_CLEAN_INTERVAL_HOURS * 3600)  # 转换为秒
+        
+        except Exception as e:
+            print(f"日志自动清理出错: {str(e)}")
+            await asyncio.sleep(3600)  # 发生错误时等待1小时后重试
+
+# 启动时运行自动清理任务
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(auto_clean_logs())
 
 # Custom exception handlers
 @app.exception_handler(StarletteHTTPException)
@@ -839,6 +878,55 @@ async def keys_page(authorized: bool = Depends(require_auth)):
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
+
+
+@app.get("/log_cleanup_config")
+async def get_log_cleanup_config(authorized: bool = Depends(require_auth)):
+    """获取日志清理配置"""
+    return JSONResponse({
+        "enabled": LOG_AUTO_CLEAN,
+        "retention_days": LOG_RETENTION_DAYS,
+        "interval_hours": LOG_CLEAN_INTERVAL_HOURS
+    })
+
+
+@app.post("/log_cleanup_config")
+async def update_log_cleanup_config(request: Request, authorized: bool = Depends(require_auth)):
+    """更新日志清理配置"""
+    global LOG_AUTO_CLEAN, LOG_RETENTION_DAYS, LOG_CLEAN_INTERVAL_HOURS
+    
+    try:
+        data = await request.json()
+        
+        # 更新配置
+        if "enabled" in data:
+            LOG_AUTO_CLEAN = bool(data["enabled"])
+        
+        if "retention_days" in data:
+            retention_days = int(data["retention_days"])
+            if retention_days < 1:
+                raise ValueError("保留天数必须大于0")
+            LOG_RETENTION_DAYS = retention_days
+        
+        if "interval_hours" in data:
+            interval_hours = int(data["interval_hours"])
+            if interval_hours < 1:
+                raise ValueError("清理间隔必须大于0小时")
+            LOG_CLEAN_INTERVAL_HOURS = interval_hours
+        
+        return JSONResponse({
+            "message": "日志清理配置已更新",
+            "config": {
+                "enabled": LOG_AUTO_CLEAN,
+                "retention_days": LOG_RETENTION_DAYS,
+                "interval_hours": LOG_CLEAN_INTERVAL_HOURS
+            }
+        })
+    
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"更新配置失败: {str(e)}")
 
 
 if __name__ == "__main__":
