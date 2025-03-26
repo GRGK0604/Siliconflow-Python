@@ -64,8 +64,8 @@ LOGGING_CONFIG["formatters"]["default"]["fmt"] = (
 )
 
 app = FastAPI(
-    title="Siliconfig API",
-    description="Silicon Flow API代理服务",
+    title="SiliconFlow API",
+    description="SiliconFlow API代理服务",
     version="1.0.0"
 )
 
