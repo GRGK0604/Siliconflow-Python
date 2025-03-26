@@ -105,9 +105,16 @@ if DB_TYPE == 'mysql':
         pool_size=MYSQL_CONFIG.get('pool_size', 10),
         max_overflow=MYSQL_CONFIG.get('max_overflow', 20),
         pool_timeout=MYSQL_CONFIG.get('pool_timeout', 30),
-        pool_recycle=MYSQL_CONFIG.get('pool_recycle', 3600),
+        pool_recycle=MYSQL_CONFIG.get('pool_recycle', 1800),  # 每30分钟回收连接
+        pool_pre_ping=True,  # 连接前ping一下，确保连接有效
         echo=False
     )
+    
+    # 记录连接池参数
+    logger.info(f"MySQL连接池配置: 大小={MYSQL_CONFIG.get('pool_size', 10)}, "
+                f"溢出={MYSQL_CONFIG.get('max_overflow', 20)}, "
+                f"超时={MYSQL_CONFIG.get('pool_timeout', 30)}秒, "
+                f"回收={MYSQL_CONFIG.get('pool_recycle', 1800)}秒")
 else:
     # 确保SQLite数据库目录存在
     os.makedirs(os.path.dirname(os.path.abspath(SQLITE_DB_PATH)), exist_ok=True)
@@ -122,15 +129,17 @@ else:
     engine = create_engine(
         connection_string,
         echo=False,
-        connect_args={"check_same_thread": False}
+        connect_args={"check_same_thread": False, "timeout": 30}
     )
     
     # 创建异步引擎（用于实际操作）
     async_engine = create_async_engine(
         async_connection_string,
         echo=False,
-        connect_args={"check_same_thread": False} 
+        connect_args={"check_same_thread": False, "timeout": 30} 
     )
+    
+    logger.info(f"SQLite连接配置: 路径={SQLITE_DB_PATH}, 超时=30秒")
 
 # 创建所有表 - 使用同步引擎
 Base.metadata.create_all(engine)
@@ -168,12 +177,14 @@ async def get_async_db_session():
     finally:
         await session.close()
 
-# 初始化数据库表
-def init_db():
-    """初始化数据库表结构"""
-    Base.metadata.create_all(engine)
-    logger.info("数据库表结构初始化完成")
+# 添加引擎关闭函数
+async def close_async_engine():
+    """关闭异步数据库引擎"""
+    if 'async_engine' in globals():
+        await async_engine.dispose()
+        logger.info("异步数据库引擎已关闭")
 
+# 健康检查函数
 def check_db_health():
     """检查数据库连接健康状态 - 同步版本，仅用于健康检查"""
     health_data = {
@@ -226,4 +237,10 @@ def check_db_health():
         health_data["status"] = "unknown"
         health_data["error"] = f"Unexpected error: {str(e)}"
     
-    return health_data 
+    return health_data
+
+# 初始化数据库表
+def init_db():
+    """初始化数据库表结构"""
+    Base.metadata.create_all(engine)
+    logger.info("数据库表结构初始化完成") 

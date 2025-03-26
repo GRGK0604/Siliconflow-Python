@@ -30,7 +30,7 @@ from db_config import (
     LOG_BACKUP_DIR,
     SQLITE_DB_PATH
 )
-from db_manager import get_db_session, get_async_db_session, ApiKey, Log, Session as DbSession, check_db_health
+from db_manager import get_db_session, get_async_db_session, ApiKey, Log, Session as DbSession, check_db_health, close_async_engine
 
 # 设置日志
 logger = logging.getLogger("main")
@@ -79,20 +79,26 @@ async def auto_clean_logs():
                     await backup_logs(retention_timestamp)
                 
                 # 删除旧日志
-                async for session in get_async_db_session():
-                    # 先计算要删除的记录数
-                    count_query = select(func.count()).select_from(Log).where(Log.call_time < retention_timestamp)
-                    result = await session.execute(count_query)
-                    count_to_delete = result.scalar() or 0
-                    
-                    if count_to_delete > 0:
-                        # 删除旧日志
-                        delete_query = Log.__table__.delete().where(Log.call_time < retention_timestamp)
-                        result = await session.execute(delete_query)
-                        deleted_count = result.rowcount
-                        
-                        # 记录清理操作
-                        logger.info(f"自动清理日志：已删除 {deleted_count} 条过期日志记录")
+                try:
+                    async for session in get_async_db_session():
+                        try:
+                            # 先计算要删除的记录数
+                            count_query = select(func.count()).select_from(Log).where(Log.call_time < retention_timestamp)
+                            result = await session.execute(count_query)
+                            count_to_delete = result.scalar() or 0
+                            
+                            if count_to_delete > 0:
+                                # 删除旧日志
+                                delete_query = Log.__table__.delete().where(Log.call_time < retention_timestamp)
+                                result = await session.execute(delete_query)
+                                deleted_count = result.rowcount
+                                
+                                # 记录清理操作
+                                logger.info(f"自动清理日志：已删除 {deleted_count} 条过期日志记录")
+                        except Exception as db_error:
+                            logger.error(f"数据库操作出错: {str(db_error)}")
+                except Exception as session_error:
+                    logger.error(f"获取数据库会话出错: {str(session_error)}")
             
             # 等待下一次执行
             next_run = datetime.now() + timedelta(hours=LOG_CLEAN_INTERVAL_HOURS)
@@ -130,34 +136,57 @@ async def backup_logs(cutoff_timestamp):
             f"logs_before_{datetime.fromtimestamp(cutoff_timestamp).strftime('%Y%m%d')}.csv"
         )
         
+        backup_count = 0
+        
         # 查询需要备份的日志
-        async for session in get_async_db_session():
-            # 查询旧日志
-            query = select(Log).where(Log.call_time < cutoff_timestamp)
-            result = await session.execute(query)
-            logs = result.scalars().all()
-            
-            # 写入CSV文件
-            if logs:
-                with open(backup_filename, 'w', encoding='utf-8') as f:
-                    # 写入CSV头
-                    f.write("id,used_key,model,call_time,input_tokens,output_tokens,total_tokens\n")
+        try:
+            async for session in get_async_db_session():
+                try:
+                    # 查询旧日志
+                    query = select(Log).where(Log.call_time < cutoff_timestamp)
+                    result = await session.execute(query)
+                    logs = result.scalars().all()
                     
-                    # 写入数据
-                    for log in logs:
-                        f.write(f"{log.id},{log.used_key},{log.model},{log.call_time},{log.input_tokens},{log.output_tokens},{log.total_tokens}\n")
-                
-                logger.info(f"已备份 {len(logs)} 条日志记录到 {backup_filename}")
+                    # 写入CSV文件
+                    if logs:
+                        with open(backup_filename, 'w', encoding='utf-8') as f:
+                            # 写入CSV头
+                            f.write("id,used_key,model,call_time,input_tokens,output_tokens,total_tokens\n")
+                            
+                            # 写入数据
+                            for log in logs:
+                                try:
+                                    # 安全地写入每条记录，处理可能的空值
+                                    log_id = log.id or ""
+                                    used_key = log.used_key.replace(",", "_") if log.used_key else ""
+                                    model = log.model.replace(",", "_") if log.model else ""
+                                    call_time = log.call_time or 0
+                                    input_tokens = log.input_tokens or 0
+                                    output_tokens = log.output_tokens or 0
+                                    total_tokens = log.total_tokens or 0
+                                    
+                                    f.write(f"{log_id},{used_key},{model},{call_time},{input_tokens},{output_tokens},{total_tokens}\n")
+                                    backup_count += 1
+                                except Exception as record_error:
+                                    logger.error(f"写入日志记录时出错: {str(record_error)}")
+                                    continue
+                        
+                        logger.info(f"已备份 {backup_count} 条日志记录到 {backup_filename}")
+                except Exception as session_error:
+                    logger.error(f"查询数据库时出错: {str(session_error)}")
+        except Exception as db_error:
+            logger.error(f"获取数据库会话时出错: {str(db_error)}")
     
     except Exception as e:
-        logger.error(f"备份日志失败: {str(e)}")
+        logger.error(f"备份日志失败: {str(e)}", exc_info=True)
 
 # 定义应用生命周期管理器
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动时运行初始化任务
-    app.state.startup_timestamp = time.time()
-    logger.info("应用启动，初始化清理任务...")
+    """管理应用程序的生命周期，初始化和清理资源"""
+    app_start_time = time.time()
+    app.state.startup_timestamp = app_start_time
+    logger.info(f"应用启动，初始化清理任务... 启动时间: {datetime.fromtimestamp(app_start_time).strftime('%Y-%m-%d %H:%M:%S')}")
     
     # 创建日志清理任务
     cleanup_task = asyncio.create_task(auto_clean_logs())
@@ -165,23 +194,48 @@ async def lifespan(app: FastAPI):
     # 将任务保存在应用状态中，以便稍后引用
     app.state.cleanup_task = cleanup_task
     
-    yield  # 应用正常运行的部分
-    
-    # 应用关闭时执行清理
-    logger.info("应用关闭，清理资源...")
-    
-    # 取消清理任务
-    if hasattr(app.state, 'cleanup_task') and not app.state.cleanup_task.done():
-        app.state.cleanup_task.cancel()
+    try:
+        # 应用正常运行部分
+        yield
+    except Exception as e:
+        logger.error(f"应用运行期间发生错误: {str(e)}", exc_info=True)
+    finally:
+        # 应用关闭时执行清理
+        app_end_time = time.time()
+        run_duration = app_end_time - app_start_time
+        logger.info(f"应用关闭，清理资源... 运行时长: {int(run_duration//3600)}小时{int((run_duration%3600)//60)}分{int(run_duration%60)}秒")
+        
+        # 取消清理任务
+        if hasattr(app.state, 'cleanup_task') and not app.state.cleanup_task.done():
+            logger.info("正在取消日志清理任务...")
+            app.state.cleanup_task.cancel()
+            try:
+                await asyncio.wait_for(app.state.cleanup_task, timeout=5.0)
+                logger.info("日志清理任务已取消")
+            except asyncio.TimeoutError:
+                logger.warning("日志清理任务取消超时")
+            except asyncio.CancelledError:
+                logger.info("日志清理任务已取消")
+            except Exception as e:
+                logger.error(f"取消日志清理任务时出错: {str(e)}")
+        
+        # 关闭数据库连接
         try:
-            await app.state.cleanup_task
-        except asyncio.CancelledError:
-            logger.info("日志清理任务已取消")
-    
-    # 仅在SQLite模式下关闭连接
-    if DB_TYPE == 'sqlite' and 'conn' in globals():
-        conn.close()
-        logger.info("SQLite数据库连接已关闭")
+            logger.info("正在关闭数据库连接...")
+            await close_async_engine()
+            logger.info("数据库连接已关闭")
+        except Exception as e:
+            logger.error(f"关闭数据库引擎时出错: {str(e)}")
+        
+        # 仅在SQLite模式下关闭连接
+        if DB_TYPE == 'sqlite' and 'conn' in globals():
+            try:
+                conn.close()
+                logger.info("SQLite数据库连接已关闭")
+            except Exception as e:
+                logger.error(f"关闭SQLite连接时出错: {str(e)}")
+        
+        logger.info("所有资源已清理完毕，应用已安全关闭")
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -328,25 +382,58 @@ async def create_session(username: str) -> str:
     return session_id
 
 
+# 检查会话是否有效
+# 设置会话清理周期(秒)
+SESSION_CLEANUP_INTERVAL = 3600  # 每小时清理一次过期会话
+
+# 上次清理会话的时间
+last_session_cleanup_time = time.time()
+
+async def cleanup_expired_sessions():
+    """清理过期的会话"""
+    global last_session_cleanup_time
+    current_time = time.time()
+    
+    # 只有在距离上次清理超过指定间隔时才执行清理
+    if current_time - last_session_cleanup_time < SESSION_CLEANUP_INTERVAL:
+        return
+    
+    try:
+        logger.info("正在清理过期会话...")
+        async for session in get_async_db_session():
+            # 删除24小时前的过期会话
+            delete_query = DbSession.__table__.delete().where(DbSession.created_at < current_time - 86400)
+            result = await session.execute(delete_query)
+            deleted_count = result.rowcount
+            if deleted_count > 0:
+                logger.info(f"已清理 {deleted_count} 个过期会话")
+        
+        # 更新上次清理时间
+        last_session_cleanup_time = current_time
+    except Exception as e:
+        logger.error(f"清理过期会话时出错: {str(e)}")
+
+
 async def validate_session(session_id: str = Cookie(None)) -> bool:
+    """验证会话是否有效"""
     if not session_id:
         return False
     
-    # 清理旧会话
     try:
-        async for session in get_async_db_session():
-            # 删除过期会话（24小时前）
-            delete_query = DbSession.__table__.delete().where(DbSession.created_at < time.time() - 86400)
-            await session.execute(delete_query)
-    except Exception as e:
-        logger.error(f"清理过期会话时出错: {str(e)}")
-    
-    # 检查当前会话
-    try:
+        # 定期清理过期会话
+        await cleanup_expired_sessions()
+        
+        # 验证当前会话
         async for session in get_async_db_session():
             query = select(DbSession).where(DbSession.session_id == session_id)
             result = await session.execute(query)
-            return bool(result.scalar_one_or_none())
+            session_obj = result.scalar_one_or_none()
+            if session_obj:
+                # 更新会话时间戳，延长会话有效期
+                session_obj.created_at = time.time()
+                return True
+            return False
+    
     except Exception as e:
         logger.error(f"验证会话时出错: {str(e)}")
         return False
@@ -357,26 +444,9 @@ async def require_auth(session_id: str = Cookie(None)):
     if not session_id:
         raise HTTPException(status_code=401, detail="未授权访问，请先登录")
     
-    # 清理过期会话
-    try:
-        async for session in get_async_db_session():
-            # 删除过期会话（24小时前）
-            delete_query = DbSession.__table__.delete().where(DbSession.created_at < time.time() - 86400)
-            await session.execute(delete_query)
-    except Exception as e:
-        logger.error(f"清理过期会话时出错: {str(e)}")
-    
-    # 检查当前会话
-    try:
-        async for session in get_async_db_session():
-            query = select(DbSession).where(DbSession.session_id == session_id)
-            result = await session.execute(query)
-            
-            if not result.scalar_one_or_none():
-                raise HTTPException(status_code=401, detail="会话已过期，请重新登录")
-    except SQLAlchemyError as e:
-        logger.error(f"检查会话时出错: {str(e)}")
-        raise HTTPException(status_code=401, detail="验证会话时出错，请重新登录")
+    valid_session = await validate_session(session_id)
+    if not valid_session:
+        raise HTTPException(status_code=401, detail="会话已过期，请重新登录")
     
     return True
 
@@ -592,68 +662,95 @@ async def stream_response(api_key: str, req_json: dict, headers: dict):
     call_time_stamp = time.time()
     model = req_json.get("model", "unknown")
     
-    async with aiohttp.ClientSession() as session:
-        try:
-            logger.info(f"开始流式请求: 模型={model}")
-            async with session.post(
-                f"{BASE_URL}/v1/chat/completions",
-                headers=headers,
-                json=req_json,
-                timeout=300,
-            ) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    logger.error(f"流式请求失败: {resp.status} - {error_text}")
-                    yield f"data: {json.dumps({'error': error_text})}\n\n".encode('utf-8')
-                    return
+    try:
+        logger.info(f"开始流式请求: 模型={model}")
+        
+        # 设置连接超时
+        timeout = aiohttp.ClientTimeout(
+            total=300,  # 总超时时间
+            sock_connect=10,  # 连接超时时间
+            sock_read=30,  # 读取超时
+        )
+        
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            try:
+                async with session.post(
+                    f"{BASE_URL}/v1/chat/completions",
+                    headers=headers,
+                    json=req_json,
+                ) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        logger.error(f"流式请求失败: {resp.status} - {error_text}")
+                        yield f"data: {json.dumps({'error': error_text})}\n\n".encode('utf-8')
+                        yield b"data: [DONE]\n\n"
+                        return
+                    
+                    # 逐行读取响应
+                    async for line in resp.content:
+                        if line:
+                            # 确保每行都是正确的 SSE 格式
+                            try:
+                                line_text = line.decode('utf-8').strip()
+                                if line_text:  # 忽略空行
+                                    if not line_text.startswith('data: '):
+                                        line_text = f"data: {line_text}"
+                                    yield f"{line_text}\n\n".encode('utf-8')
+                                    
+                                    # 尝试解析完成的 tokens
+                                    if line_text.startswith('data: '):
+                                        try:
+                                            data_str = line_text[6:].strip()
+                                            if data_str and data_str != "[DONE]":
+                                                data = json.loads(data_str)
+                                                if 'usage' in data:
+                                                    usage = data['usage']
+                                                    prompt_tokens = usage.get('prompt_tokens', 0)
+                                                    completion_tokens = usage.get('completion_tokens', 0)
+                                                    total_tokens = usage.get('total_tokens', 0)
+                                        except json.JSONDecodeError:
+                                            pass
+                            except UnicodeDecodeError as ude:
+                                logger.warning(f"解码响应数据时出错: {str(ude)}")
+                                # 尝试以二进制方式传递
+                                yield line
+                            except Exception as line_error:
+                                logger.error(f"处理响应行时出错: {str(line_error)}")
+                                continue
+                    
+                    # 发送结束标记
+                    yield "data: [DONE]\n\n".encode('utf-8')
+                    
+                    # 记录使用情况
+                    if prompt_tokens > 0 or completion_tokens > 0 or total_tokens > 0:
+                        log_completion(
+                            api_key,
+                            model,
+                            call_time_stamp,
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens or (prompt_tokens + completion_tokens),
+                        )
+                        
+                        logger.info(f"流式请求完成: 模型={model}, 输入tokens={prompt_tokens}, 输出tokens={completion_tokens}, 总tokens={total_tokens}")
+            
+            except aiohttp.ClientError as e:
+                logger.error(f"HTTP客户端错误: {str(e)}")
+                error_json = json.dumps({"error": f"上游服务请求失败: {str(e)}"})
+                yield f"data: {error_json}\n\n".encode('utf-8')
+                yield b"data: [DONE]\n\n"
                 
-                # 逐行读取响应
-                async for line in resp.content:
-                    if line:
-                        # 确保每行都是正确的 SSE 格式
-                        try:
-                            line = line.decode('utf-8').strip()
-                            if line:  # 忽略空行
-                                if not line.startswith('data: '):
-                                    line = f"data: {line}"
-                                yield f"{line}\n\n".encode('utf-8')
-                                
-                                # 尝试解析完成的 tokens
-                                if line.startswith('data: '):
-                                    try:
-                                        data = json.loads(line[6:])
-                                        if 'usage' in data:
-                                            usage = data['usage']
-                                            prompt_tokens = usage.get('prompt_tokens', 0)
-                                            completion_tokens = usage.get('completion_tokens', 0)
-                                            total_tokens = usage.get('total_tokens', 0)
-                                    except json.JSONDecodeError:
-                                        pass
-                        except Exception as e:
-                            logger.error(f"处理响应行时出错: {str(e)}")
-                            continue
+            except asyncio.TimeoutError:
+                logger.error("流式请求超时")
+                error_json = json.dumps({"error": "请求超时"})
+                yield f"data: {error_json}\n\n".encode('utf-8')
+                yield b"data: [DONE]\n\n"
                 
-                # 发送结束标记
-                yield "data: [DONE]\n\n".encode('utf-8')
-                
-                # 记录使用情况
-                log_completion(
-                    api_key,
-                    model,
-                    call_time_stamp,
-                    prompt_tokens,
-                    completion_tokens,
-                    total_tokens,
-                )
-                
-                logger.info(f"流式请求完成: 模型={model}, 输入tokens={prompt_tokens}, 输出tokens={completion_tokens}, 总tokens={total_tokens}")
-                
-        except asyncio.TimeoutError:
-            logger.error("流式请求超时")
-            yield f"data: {json.dumps({'error': '请求超时'})}\n\n".encode('utf-8')
-        except Exception as e:
-            logger.error(f"流式请求出错: {str(e)}", exc_info=True)
-            yield f"data: {json.dumps({'error': str(e)})}\n\n".encode('utf-8')
+    except Exception as e:
+        logger.error(f"流式请求处理出错: {str(e)}", exc_info=True)
+        error_json = json.dumps({"error": str(e)})
+        yield f"data: {error_json}\n\n".encode('utf-8')
+        yield b"data: [DONE]\n\n"
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
@@ -786,50 +883,77 @@ async def chat_completions(request: Request):
 
 async def direct_stream_response(api_key: str, body: bytes, headers: dict):
     """直接透传流式响应，不做任何处理"""
-    model = "unknown"
+    model = "unknown"  # 默认模型名称
     call_time_stamp = time.time()
     prompt_tokens = 0
     completion_tokens = 0
+    total_tokens = 0
     
-    async with aiohttp.ClientSession() as session:
+    try:
+        # 尝试从请求体中解析模型名称
         try:
-            async with session.post(
-                f"{BASE_URL}/v1/chat/completions",
-                headers=headers,
-                data=body,  # 使用原始请求体
-                timeout=300,
-            ) as resp:
-                # 直接透传响应
-                async for chunk in resp.content:
-                    yield chunk
-                    
-                    # 尝试解析最后一个块以获取token信息
-                    try:
-                        chunk_str = chunk.decode("utf-8")
-                        if chunk_str.startswith("data: ") and "usage" in chunk_str:
-                            data = json.loads(chunk_str[6:])
-                            usage = data.get("usage", {})
-                            if usage:
-                                prompt_tokens = usage.get("prompt_tokens", 0)
-                                completion_tokens = usage.get("completion_tokens", 0)
-                                total_tokens = usage.get("total_tokens", 0)
-                    except:
-                        pass
+            request_data = json.loads(body.decode('utf-8'))
+            if 'model' in request_data:
+                model = request_data['model']
+        except:
+            pass
+        
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(
+                    f"{BASE_URL}/v1/chat/completions",
+                    headers=headers,
+                    data=body,  # 使用原始请求体
+                    timeout=300,
+                ) as resp:
+                    # 直接透传响应
+                    async for chunk in resp.content:
+                        yield chunk
+                        
+                        # 尝试解析chunk以获取token信息
+                        try:
+                            chunk_str = chunk.decode("utf-8").strip()
+                            if chunk_str.startswith("data: ") and "usage" in chunk_str:
+                                data_str = chunk_str[6:].strip()
+                                if data_str and data_str != "[DONE]":
+                                    data = json.loads(data_str)
+                                    usage = data.get("usage", {})
+                                    if usage:
+                                        prompt_tokens = usage.get("prompt_tokens", 0)
+                                        completion_tokens = usage.get("completion_tokens", 0)
+                                        total_tokens = usage.get("total_tokens", 0)
+                        except:
+                            pass
                 
                 # 记录使用情况
-                log_completion(
-                    api_key,
-                    model,
-                    call_time_stamp,
-                    prompt_tokens,
-                    completion_tokens,
-                    prompt_tokens + completion_tokens,
-                )
-                
-        except Exception as e:
-            error_json = json.dumps({"error": {"message": str(e), "type": "server_error"}})
-            yield f"data: {error_json}\n\n".encode("utf-8")
-            yield b"data: [DONE]\n\n"
+                if prompt_tokens > 0 or completion_tokens > 0 or total_tokens > 0:
+                    log_completion(
+                        api_key,
+                        model,
+                        call_time_stamp,
+                        prompt_tokens,
+                        completion_tokens,
+                        total_tokens or (prompt_tokens + completion_tokens)
+                    )
+                    logger.info(f"流式请求完成: 模型={model}, 输入tokens={prompt_tokens}, 输出tokens={completion_tokens}, 总tokens={total_tokens}")
+            
+            except aiohttp.ClientError as e:
+                logger.error(f"HTTP客户端错误: {str(e)}")
+                error_json = json.dumps({"error": {"message": f"上游服务请求失败: {str(e)}", "type": "upstream_error"}})
+                yield f"data: {error_json}\n\n".encode("utf-8")
+                yield b"data: [DONE]\n\n"
+            
+            except asyncio.TimeoutError:
+                logger.error("请求超时")
+                error_json = json.dumps({"error": {"message": "请求超时", "type": "timeout_error"}})
+                yield f"data: {error_json}\n\n".encode("utf-8")
+                yield b"data: [DONE]\n\n"
+                    
+    except Exception as e:
+        logger.error(f"处理流式响应时出错: {str(e)}", exc_info=True)
+        error_json = json.dumps({"error": {"message": str(e), "type": "server_error"}})
+        yield f"data: {error_json}\n\n".encode("utf-8")
+        yield b"data: [DONE]\n\n"
 
 @app.post("/v1/embeddings")
 async def embeddings(request: Request):
