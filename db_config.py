@@ -5,7 +5,7 @@
 import os
 
 # 数据库类型: 'mysql' 或 'sqlite'
-DB_TYPE = 'mysql'
+DB_TYPE = 'sqlite'
 
 # 从环境变量获取MySQL配置
 MYSQL_CONFIG = {

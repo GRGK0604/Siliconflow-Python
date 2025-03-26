@@ -32,8 +32,7 @@ Base = declarative_base()
 class ApiKey(Base):
     __tablename__ = "api_keys"
     
-    id = Column(Integer, primary_key=True)
-    key = Column(String(255), unique=True, nullable=False)
+    key = Column(String(255), primary_key=True)  # 使用key作为主键
     add_time = Column(Float, default=time.time)
     balance = Column(Float, default=0)
     usage_count = Column(Integer, default=0)

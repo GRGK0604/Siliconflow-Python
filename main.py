@@ -10,7 +10,7 @@ import asyncio
 import aiohttp
 import json
 import secrets
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from uvicorn.config import LOGGING_CONFIG
 from datetime import datetime, timedelta
 import os
@@ -425,12 +425,20 @@ async def validate_session(session_id: str = Cookie(None)) -> bool:
         
         # 验证当前会话
         async for session in get_async_db_session():
+            # 首先查询会话是否存在
             query = select(DbSession).where(DbSession.session_id == session_id)
             result = await session.execute(query)
             session_obj = result.scalar_one_or_none()
+            
             if session_obj:
                 # 更新会话时间戳，延长会话有效期
-                session_obj.created_at = time.time()
+                current_time = time.time()
+                update_query = DbSession.__table__.update().where(
+                    DbSession.session_id == session_id
+                ).values(created_at=current_time)
+                
+                await session.execute(update_query)
+                await session.commit()
                 return True
             return False
     
@@ -479,7 +487,7 @@ def insert_api_key(api_key: str, balance: float):
         session.add(new_key)
 
 
-def log_completion(
+async def log_completion(
     used_key: str,
     model: str,
     call_time: float,
@@ -487,16 +495,22 @@ def log_completion(
     output_tokens: int,
     total_tokens: int,
 ):
-    with get_db_session() as session:
-        log_entry = Log(
-            used_key=used_key,
-            model=model,
-            call_time=call_time,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens
-        )
-        session.add(log_entry)
+    """记录API调用的token使用情况"""
+    try:
+        async for session in get_async_db_session():
+            log_entry = Log(
+                used_key=used_key,
+                model=model,
+                call_time=call_time,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens
+            )
+            session.add(log_entry)
+            await session.commit()
+    except Exception as e:
+        logger.error(f"记录日志时出错: {str(e)}")
+        # 出错时继续运行，不影响主流程
 
 
 @app.get("/")
@@ -585,38 +599,49 @@ async def import_keys(request: Request, authorized: bool = Depends(require_auth)
     if not keys:
         raise HTTPException(status_code=400, detail="未提供有效的api-key")
     
-    tasks = []
     # 检查重复的键
     duplicate_keys = []
-    with get_db_session() as session:
+    async for session in get_async_db_session():
         for key in keys:
             query = select(ApiKey).where(ApiKey.key == key)
-            existing_key = session.execute(query).scalar_one_or_none()
+            result = await session.execute(query)
+            existing_key = result.scalar_one_or_none()
             if existing_key:
                 duplicate_keys.append(key)
     
     # 准备任务
+    tasks = []
     for key in keys:
         if key in duplicate_keys:
-            tasks.append(asyncio.sleep(0, result=("duplicate", key)))
+            tasks.append(asyncio.create_task(asyncio.sleep(0, result=("duplicate", key))))
         else:
-            tasks.append(validate_key_async(key))
+            tasks.append(asyncio.create_task(validate_key_async(key)))
     
     results = await asyncio.gather(*tasks)
     imported_count = 0
     duplicate_count = len(duplicate_keys)
     invalid_count = 0
     
-    for idx, result in enumerate(results):
-        if result[0] == "duplicate":
-            continue
-        else:
-            valid, balance = result
-            if valid and float(balance) > 0:
-                insert_api_key(keys[idx], balance)
-                imported_count += 1
+    # 异步添加有效的键
+    async for session in get_async_db_session():
+        for idx, result in enumerate(results):
+            # 跳过重复的键
+            if isinstance(result, tuple) and result[0] == "duplicate":
+                continue
             else:
-                invalid_count += 1
+                valid, balance = result
+                if valid and float(balance) > 0:
+                    # 添加新键
+                    new_key = ApiKey(
+                        key=keys[idx],
+                        add_time=time.time(),
+                        balance=balance,
+                        usage_count=0
+                    )
+                    session.add(new_key)
+                    imported_count += 1
+                else:
+                    invalid_count += 1
     
     return JSONResponse(
         {
@@ -627,26 +652,27 @@ async def import_keys(request: Request, authorized: bool = Depends(require_auth)
 
 @app.post("/refresh")
 async def refresh_keys(authorized: bool = Depends(require_auth)):
-    with get_db_session() as session:
+    all_keys = []
+    async for session in get_async_db_session():
         query = select(ApiKey)
-        all_keys = [key.key for key in session.execute(query).scalars().all()]
+        result = await session.execute(query)
+        all_keys = [key.key for key in result.scalars().all()]
 
     # Create tasks for parallel validation
     tasks = [validate_key_async(key) for key in all_keys]
     results = await asyncio.gather(*tasks)
 
     removed = 0
-    for key, (valid, balance) in zip(all_keys, results):
-        if valid and float(balance) > 0:
-            with get_db_session() as session:
-                query = select(ApiKey).where(ApiKey.key == key)
-                api_key = session.execute(query).scalar_one_or_none()
-                if api_key:
-                    api_key.balance = balance
-        else:
-            with get_db_session() as session:
+    async for session in get_async_db_session():
+        for key, (valid, balance) in zip(all_keys, results):
+            if valid and float(balance) > 0:
+                # 更新有效密钥的余额
+                update_query = ApiKey.__table__.update().where(ApiKey.key == key).values(balance=balance)
+                await session.execute(update_query)
+            else:
+                # 删除无效的密钥
                 delete_query = ApiKey.__table__.delete().where(ApiKey.key == key)
-                session.execute(delete_query)
+                await session.execute(delete_query)
                 removed += 1
 
     return JSONResponse(
@@ -723,7 +749,7 @@ async def stream_response(api_key: str, req_json: dict, headers: dict):
                     
                     # 记录使用情况
                     if prompt_tokens > 0 or completion_tokens > 0 or total_tokens > 0:
-                        log_completion(
+                        await log_completion(
                             api_key,
                             model,
                             call_time_stamp,
@@ -754,6 +780,9 @@ async def stream_response(api_key: str, req_json: dict, headers: dict):
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
+    """处理聊天完成请求，转发到上游API"""
+    start_time = time.time()
+    
     # 检查是否配置了 API_KEY
     if API_KEY is not None:
         # 获取请求头中的 Authorization
@@ -771,23 +800,31 @@ async def chat_completions(request: Request):
         if api_key != API_KEY:
             raise HTTPException(status_code=401, detail="无效的 API 密钥")
     
-    # 获取并验证可用的密钥
-    with get_db_session() as session:
-        query = select(ApiKey.key)
-        keys = session.execute(query).scalars().all()
-    
-    if not keys:
-        raise HTTPException(status_code=500, detail="没有可用的API密钥")
-    
-    # 随机选择一个密钥
-    selected_key = random.choice(keys)
-    
-    # 更新使用计数
-    with get_db_session() as session:
-        query = select(ApiKey).where(ApiKey.key == selected_key)
-        api_key = session.execute(query).scalar_one_or_none()
-        if api_key:
-            api_key.usage_count += 1
+    # 获取可用的密钥
+    selected_key = None
+    try:
+        # 获取并验证可用的密钥
+        async for session in get_async_db_session():
+            # 修改这里，使用ApiKey.key作为查询字段，而不是id
+            query = select(ApiKey.key).where(ApiKey.enabled == True)
+            result = await session.execute(query)
+            keys = result.scalars().all()
+            
+            if not keys:
+                raise HTTPException(status_code=503, detail="没有可用的API密钥")
+            
+            # 随机选择一个密钥
+            selected_key = random.choice(keys)
+            
+            # 更新使用计数
+            update_query = ApiKey.__table__.update().where(ApiKey.key == selected_key).values(usage_count=ApiKey.usage_count + 1)
+            await session.execute(update_query)
+    except SQLAlchemyError as e:
+        logger.error(f"数据库操作出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"数据库错误: {str(e)}")
+    except Exception as e:
+        logger.error(f"选择API密钥时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"服务器内部错误: {str(e)}")
     
     # 解析请求体
     try:
@@ -831,52 +868,54 @@ async def chat_completions(request: Request):
     else:
         # 处理非流式响应
         try:
-            async with aiohttp.ClientSession() as session:
-                # 设置更合理的超时
-                timeout = aiohttp.ClientTimeout(total=300, sock_connect=10, sock_read=300)
-                
-                async with session.post(
-                    f"{BASE_URL}/v1/chat/completions",
-                    headers=headers,
-                    json=body,
-                    timeout=timeout,
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        logger.error(f"请求失败: {response.status} - {error_text}")
-                        raise HTTPException(
-                            status_code=response.status,
-                            detail=f"API请求失败: {error_text}"
+            # 设置更合理的超时
+            timeout = aiohttp.ClientTimeout(total=300, sock_connect=10, sock_read=300)
+            
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                try:
+                    async with session.post(
+                        f"{BASE_URL}/v1/chat/completions",
+                        headers=headers,
+                        json=body,
+                    ) as response:
+                        if response.status != 200:
+                            error_text = await response.text()
+                            logger.error(f"请求失败: {response.status} - {error_text}")
+                            raise HTTPException(
+                                status_code=response.status,
+                                detail=f"API请求失败: {error_text}"
+                            )
+                        
+                        response_data = await response.json()
+                        
+                        # 计算 token 使用量
+                        usage = response_data.get("usage", {})
+                        prompt_tokens = usage.get("prompt_tokens", 0)
+                        completion_tokens = usage.get("completion_tokens", 0)
+                        total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens)
+                        
+                        # 记录使用情况
+                        await log_completion(
+                            selected_key,
+                            model,
+                            call_time_stamp,
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens,
                         )
-                    
-                    response_data = await response.json()
-                    
-                    # 计算 token 使用量
-                    usage = response_data.get("usage", {})
-                    prompt_tokens = usage.get("prompt_tokens", 0)
-                    completion_tokens = usage.get("completion_tokens", 0)
-                    total_tokens = prompt_tokens + completion_tokens
-                    
-                    # 记录使用情况
-                    log_completion(
-                        selected_key,
-                        model,
-                        call_time_stamp,
-                        prompt_tokens,
-                        completion_tokens,
-                        total_tokens,
-                    )
-                    
-                    logger.info(f"请求完成: 模型={model}, 输入tokens={prompt_tokens}, 输出tokens={completion_tokens}, 总tokens={total_tokens}")
-                    
-                    return JSONResponse(response_data)
+                        
+                        request_time = round((time.time() - start_time) * 1000)
+                        logger.info(f"请求完成: 模型={model}, 输入tokens={prompt_tokens}, 输出tokens={completion_tokens}, 总tokens={total_tokens}, 处理时间={request_time}ms")
+                        
+                        return JSONResponse(response_data)
+                
+                except aiohttp.ClientError as e:
+                    logger.error(f"HTTP客户端错误: {str(e)}", exc_info=True)
+                    raise HTTPException(status_code=502, detail=f"上游服务请求失败: {str(e)}")
+                except asyncio.TimeoutError:
+                    logger.error(f"请求超时")
+                    raise HTTPException(status_code=504, detail="请求超时")
         
-        except aiohttp.ClientError as e:
-            logger.error(f"HTTP客户端错误: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=502, detail=f"上游服务请求失败: {str(e)}")
-        except asyncio.TimeoutError:
-            logger.error(f"请求超时")
-            raise HTTPException(status_code=504, detail="请求超时")
         except Exception as e:
             logger.error(f"处理请求时出错: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"请求处理失败: {str(e)}")
@@ -927,7 +966,7 @@ async def direct_stream_response(api_key: str, body: bytes, headers: dict):
                 
                 # 记录使用情况
                 if prompt_tokens > 0 or completion_tokens > 0 or total_tokens > 0:
-                    log_completion(
+                    await log_completion(
                         api_key,
                         model,
                         call_time_stamp,
@@ -962,12 +1001,13 @@ async def embeddings(request: Request):
         if request_api_key != f"Bearer {API_KEY}":
             raise HTTPException(status_code=403, detail="无效的API_KEY")
     
-    with get_db_session() as session:
-        query = select(ApiKey.key)
-        keys = session.execute(query).scalars().all()
+    async for session in get_async_db_session():
+        query = select(ApiKey.key).where(ApiKey.enabled == True)
+        result = await session.execute(query)
+        keys = result.scalars().all()
     
     if not keys:
-        raise HTTPException(status_code=500, detail="没有可用的api-key")
+        raise HTTPException(status_code=503, detail="没有可用的api-key")
     
     selected = random.choice(keys)
     forward_headers = dict(request.headers)
@@ -990,13 +1030,14 @@ async def embeddings(request: Request):
 async def list_models(request: Request):
     try:
         # 获取可用的key列表
-        with get_db_session() as session:
-            query = select(ApiKey.key)
-            keys = session.execute(query).scalars().all()
+        async for session in get_async_db_session():
+            query = select(ApiKey.key).where(ApiKey.enabled == True)
+            result = await session.execute(query)
+            keys = result.scalars().all()
         
         if not keys:
             logger.error("没有可用的API密钥用于models请求")
-            raise HTTPException(status_code=500, detail="没有可用的api-key")
+            raise HTTPException(status_code=503, detail="没有可用的api-key")
         
         # 随机选择一个密钥
         selected = random.choice(keys)
