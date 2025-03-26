@@ -1,0 +1,23 @@
+version: '3'
+
+services:
+  app:
+    build: .
+    restart: always
+    ports:
+      - "7898:7898"
+    volumes:
+      - ./config.py:/app/config.py
+      - ./db_config.py:/app/db_config.py
+      - ./logs:/app/logs
+      - ./log_backups:/app/log_backups
+    # 环境变量用于连接外部MySQL
+    # 这些变量可以在db_config.py中使用os.environ获取
+    # 请根据实际情况修改这些环境变量的值
+    environment:
+      - TZ=Asia/Shanghai
+      - MYSQL_HOST=your_mysql_host
+      - MYSQL_PORT=3306
+      - MYSQL_USER=your_mysql_user
+      - MYSQL_PASSWORD=your_mysql_password
+      - MYSQL_DATABASE=siliconfig 

@@ -4,33 +4,89 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from config import API_KEY, ADMIN_USERNAME, ADMIN_PASSWORD
-import sqlite3
 import random
 import time
 import asyncio
 import aiohttp
 import json
 import secrets
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from uvicorn.config import LOGGING_CONFIG
 from datetime import datetime, timedelta
+import os
+import logging
+import logging.handlers
+from sqlalchemy import select, func, desc, asc
+from sqlalchemy.exc import SQLAlchemyError
 
+# 导入数据库配置和管理器
+from db_config import (
+    DB_TYPE, 
+    LOG_AUTO_CLEAN, 
+    LOG_RETENTION_DAYS,
+    LOG_CLEAN_INTERVAL_HOURS,
+    LOG_BACKUP_ENABLED,
+    LOG_BACKUP_DIR
+)
+from db_manager import get_db_session, ApiKey, Log, Session as DbSession, check_db_health
+
+# 设置日志
+logger = logging.getLogger("main")
+logger.setLevel(logging.INFO)
+
+# 创建控制台处理器
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(console_formatter)
+
+# 创建文件处理器
+os.makedirs("logs", exist_ok=True)
+file_handler = logging.handlers.RotatingFileHandler(
+    "logs/app.log", 
+    maxBytes=10*1024*1024,  # 10MB
+    backupCount=5,
+    encoding='utf-8'
+)
+file_handler.setLevel(logging.INFO)
+file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(file_formatter)
+
+# 添加处理器到logger
+logger.addHandler(console_handler)
+logger.addHandler(file_handler)
+
+# 配置日志格式
 LOGGING_CONFIG["formatters"]["default"]["fmt"] = (
     "%(asctime)s - %(levelprefix)s %(message)s"
 )
 
-# 日志清理配置
-LOG_AUTO_CLEAN = True  # 是否启用自动清理日志
-LOG_RETENTION_DAYS = 30  # 保留最近30天的日志
-LOG_CLEAN_INTERVAL_HOURS = 24  # 每24小时清理一次
-
-app = FastAPI()
+app = FastAPI(
+    title="Siliconfig API",
+    description="Silicon Flow API代理服务",
+    version="1.0.0"
+)
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"))
 
-# SQLite DB initialization
-conn = sqlite3.connect("pool.db", check_same_thread=False)
+# 确保备份目录存在（如果启用）
+if LOG_BACKUP_ENABLED:
+    os.makedirs(LOG_BACKUP_DIR, exist_ok=True)
+
+BASE_URL = "https://api.siliconflow.cn"  # adjust if needed
+
+# 确保数据库目录存在
+os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
+
+# SQLite 数据库连接
+conn = sqlite3.connect(
+    DB_PATH, 
+    check_same_thread=DB_CHECK_SAME_THREAD,
+    timeout=DB_TIMEOUT
+)
+conn.execute("PRAGMA journal_mode=WAL")  # 使用WAL模式提高并发性能
+conn.execute("PRAGMA busy_timeout=10000")  # 设置繁忙超时以减少"database is locked"错误
 
 # 创建一个上下文管理器来处理数据库连接和游标
 @contextmanager
@@ -39,8 +95,17 @@ def get_cursor():
     try:
         yield cursor
         conn.commit()
+    except sqlite3.OperationalError as e:
+        conn.rollback()
+        if "database is locked" in str(e):
+            print(f"数据库锁定错误: {str(e)}")
+            raise HTTPException(status_code=503, detail="数据库繁忙，请稍后重试")
+        else:
+            print(f"数据库操作错误: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"数据库操作错误: {str(e)}")
     except Exception as e:
         conn.rollback()
+        print(f"游标操作失败: {str(e)}")
         raise e
     finally:
         cursor.close()
@@ -79,42 +144,102 @@ with get_cursor() as cursor:
     )
     """)
 
-BASE_URL = "https://api.siliconflow.cn"  # adjust if needed
+    # 添加索引以提高查询性能
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_call_time ON logs(call_time)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at)")
+
+# 备份日志到文件
+def backup_logs(cutoff_timestamp):
+    """将要删除的日志备份到文件中"""
+    if not LOG_BACKUP_ENABLED:
+        return
+    
+    try:
+        # 确保备份目录存在
+        os.makedirs(LOG_BACKUP_DIR, exist_ok=True)
+        
+        backup_filename = os.path.join(
+            LOG_BACKUP_DIR, 
+            f"logs_before_{datetime.fromtimestamp(cutoff_timestamp).strftime('%Y%m%d')}.csv"
+        )
+        
+        # 查询需要备份的日志
+        with get_db_session() as session:
+            # 查询旧日志
+            query = select(Log).where(Log.call_time < cutoff_timestamp)
+            logs = session.execute(query).scalars().all()
+            
+            # 写入CSV文件
+            if logs:
+                with open(backup_filename, 'w', encoding='utf-8') as f:
+                    # 写入CSV头
+                    f.write("id,used_key,model,call_time,input_tokens,output_tokens,total_tokens\n")
+                    
+                    # 写入数据
+                    for log in logs:
+                        f.write(f"{log.id},{log.used_key},{log.model},{log.call_time},{log.input_tokens},{log.output_tokens},{log.total_tokens}\n")
+                
+                logger.info(f"已备份 {len(logs)} 条日志记录到 {backup_filename}")
+    
+    except Exception as e:
+        logger.error(f"备份日志失败: {str(e)}")
 
 # 自动清理日志的函数
 async def auto_clean_logs():
     """定时清理过期的日志记录"""
+    logger.info(f"日志自动清理任务已启动，将每 {LOG_CLEAN_INTERVAL_HOURS} 小时运行一次")
+    
     while True:
         try:
             if LOG_AUTO_CLEAN:
                 # 计算保留日志的时间戳（当前时间减去保留天数）
                 retention_timestamp = time.time() - (LOG_RETENTION_DAYS * 86400)  # 86400秒 = 1天
                 
-                with get_cursor() as cursor:
-                    # 删除旧日志
-                    cursor.execute("DELETE FROM logs WHERE call_time < ?", (retention_timestamp,))
-                    deleted_count = cursor.rowcount
+                # 如果启用了备份，先备份日志
+                if LOG_BACKUP_ENABLED:
+                    backup_logs(retention_timestamp)
                 
-                # 记录清理操作
-                if deleted_count > 0:
-                    print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - 自动清理日志：已删除 {deleted_count} 条过期日志记录")
+                # 删除旧日志
+                with get_db_session() as session:
+                    # 先计算要删除的记录数
+                    count_query = select(func.count()).select_from(Log).where(Log.call_time < retention_timestamp)
+                    count_to_delete = session.execute(count_query).scalar() or 0
                     
-                    # 整理数据库文件以回收磁盘空间
-                    if deleted_count > 100:  # 只有在删除了大量记录时才执行VACUUM
-                        with get_cursor() as cursor:
-                            cursor.execute("VACUUM")
+                    if count_to_delete > 0:
+                        # 删除旧日志
+                        delete_query = Log.__table__.delete().where(Log.call_time < retention_timestamp)
+                        result = session.execute(delete_query)
+                        deleted_count = result.rowcount
+                        
+                        # 记录清理操作
+                        logger.info(f"自动清理日志：已删除 {deleted_count} 条过期日志记录")
             
             # 等待下一次执行
+            next_run = datetime.now() + timedelta(hours=LOG_CLEAN_INTERVAL_HOURS)
+            logger.info(f"下一次日志清理将在 {next_run.strftime('%Y-%m-%d %H:%M:%S')} 进行")
+            
             await asyncio.sleep(LOG_CLEAN_INTERVAL_HOURS * 3600)  # 转换为秒
         
         except Exception as e:
-            print(f"日志自动清理出错: {str(e)}")
+            logger.error(f"日志自动清理出错: {str(e)}")
             await asyncio.sleep(3600)  # 发生错误时等待1小时后重试
 
 # 启动时运行自动清理任务
 @app.on_event("startup")
 async def startup_event():
+    # 记录启动时间戳
+    app.state.startup_timestamp = time.time()
+    
+    logger.info("应用启动，初始化清理任务...")
     asyncio.create_task(auto_clean_logs())
+
+# 应用关闭时确保连接关闭
+@app.on_event("shutdown")
+async def shutdown_event():
+    logger.info("应用关闭，清理资源...")
+    if conn:
+        conn.close()
+        print("数据库连接已关闭")
 
 # Custom exception handlers
 @app.exception_handler(StarletteHTTPException)
@@ -156,11 +281,14 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # Authentication functions
 def create_session(username: str) -> str:
     session_id = secrets.token_hex(16)
-    with get_cursor() as cursor:
-        cursor.execute(
-            "INSERT INTO sessions (session_id, username, created_at) VALUES (?, ?, ?)",
-            (session_id, username, time.time())
+    with get_db_session() as session:
+        db_session = DbSession(
+            session_id=session_id,
+            username=username,
+            created_at=time.time()
         )
+        session.add(db_session)
+    
     return session_id
 
 
@@ -168,19 +296,24 @@ def validate_session(session_id: str = Cookie(None)) -> bool:
     if not session_id:
         return False
     
-    # 使用单独的游标清理旧会话
-    with get_cursor() as cursor:
-        # Clean up old sessions (older than 24 hours)
-        cursor.execute(
-            "DELETE FROM sessions WHERE created_at < ?",
-            (time.time() - 86400,)  # 24 hours in seconds
-        )
+    # 清理旧会话
+    try:
+        with get_db_session() as session:
+            # 删除过期会话（24小时前）
+            delete_query = DbSession.__table__.delete().where(DbSession.created_at < time.time() - 86400)
+            session.execute(delete_query)
+    except Exception as e:
+        logger.error(f"清理过期会话时出错: {str(e)}")
     
-    # 使用另一个游标检查会话是否存在
-    with get_cursor() as cursor:
-        cursor.execute("SELECT username FROM sessions WHERE session_id = ?", (session_id,))
-        result = cursor.fetchone()
-        return bool(result)
+    # 检查当前会话
+    try:
+        with get_db_session() as session:
+            query = select(DbSession).where(DbSession.session_id == session_id)
+            result = session.execute(query).scalar_one_or_none()
+            return bool(result)
+    except Exception as e:
+        logger.error(f"验证会话时出错: {str(e)}")
+        return False
 
 
 def require_auth(session_id: str = Cookie(None)):
@@ -188,30 +321,25 @@ def require_auth(session_id: str = Cookie(None)):
     if not session_id:
         raise HTTPException(status_code=401, detail="未授权访问，请先登录")
     
-    # 使用单独的游标清理过期会话
+    # 清理过期会话
     try:
-        with get_cursor() as cursor:
-            # 清理过期会话
-            cursor.execute(
-                "DELETE FROM sessions WHERE created_at < ?",
-                (time.time() - 86400,)  # 24 hours in seconds
-            )
+        with get_db_session() as session:
+            # 删除过期会话（24小时前）
+            delete_query = DbSession.__table__.delete().where(DbSession.created_at < time.time() - 86400)
+            session.execute(delete_query)
     except Exception as e:
-        print(f"清理过期会话时出错: {str(e)}")
-        # 继续执行，不要因为清理失败而阻止用户访问
+        logger.error(f"清理过期会话时出错: {str(e)}")
     
-    # 使用另一个游标检查当前会话
+    # 检查当前会话
     try:
-        with get_cursor() as cursor:
-            # 查询当前会话
-            cursor.execute("SELECT username FROM sessions WHERE session_id = ?", (session_id,))
-            result = cursor.fetchone()
+        with get_db_session() as session:
+            query = select(DbSession).where(DbSession.session_id == session_id)
+            result = session.execute(query).scalar_one_or_none()
             
             if not result:
-                # 如果会话不存在，抛出401异常
                 raise HTTPException(status_code=401, detail="会话已过期，请重新登录")
-    except sqlite3.Error as e:
-        print(f"检查会话时出错: {str(e)}")
+    except SQLAlchemyError as e:
+        logger.error(f"检查会话时出错: {str(e)}")
         raise HTTPException(status_code=401, detail="验证会话时出错，请重新登录")
     
     return True
@@ -235,11 +363,14 @@ async def validate_key_async(api_key: str):
 
 
 def insert_api_key(api_key: str, balance: float):
-    with get_cursor() as cursor:
-        cursor.execute(
-            "INSERT OR IGNORE INTO api_keys (key, add_time, balance, usage_count) VALUES (?, ?, ?, ?)",
-            (api_key, time.time(), balance, 0),
+    with get_db_session() as session:
+        new_key = ApiKey(
+            key=api_key,
+            add_time=time.time(),
+            balance=balance,
+            usage_count=0
         )
+        session.add(new_key)
 
 
 def log_completion(
@@ -250,11 +381,16 @@ def log_completion(
     output_tokens: int,
     total_tokens: int,
 ):
-    with get_cursor() as cursor:
-        cursor.execute(
-            "INSERT INTO logs (used_key, model, call_time, input_tokens, output_tokens, total_tokens) VALUES (?, ?, ?, ?, ?, ?)",
-            (used_key, model, call_time, input_tokens, output_tokens, total_tokens),
+    with get_db_session() as session:
+        log_entry = Log(
+            used_key=used_key,
+            model=model,
+            call_time=call_time,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens
         )
+        session.add(log_entry)
 
 
 @app.get("/")
@@ -262,14 +398,14 @@ async def root(session_id: str = Cookie(None)):
     # 检查用户是否已登录
     if session_id:
         try:
-            with get_cursor() as cursor:
-                cursor.execute("SELECT username FROM sessions WHERE session_id = ?", (session_id,))
-                result = cursor.fetchone()
+            with get_db_session() as session:
+                query = select(DbSession).where(DbSession.session_id == session_id)
+                result = session.execute(query).scalar_one_or_none()
                 if result:
                     # 用户已登录，重定向到 admin 页面
                     return RedirectResponse(url="/admin")
         except Exception as e:
-            print(f"检查会话时出错: {str(e)}")
+            logger.error(f"检查会话时出错: {str(e)}")
             # 出错时继续显示登录页面
     
     # 用户未登录或会话无效，显示登录页面
@@ -311,8 +447,9 @@ async def login(request: Request):
 async def logout(session_id: str = Cookie(None)):
     # 清除数据库中的会话
     if session_id:
-        with get_cursor() as cursor:
-            cursor.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+        with get_db_session() as session:
+            delete_query = DbSession.__table__.delete().where(DbSession.session_id == session_id)
+            session.execute(delete_query)
     
     # 创建重定向响应
     response = RedirectResponse(url="/", status_code=303)  # 使用 303 See Other 状态码
@@ -345,10 +482,11 @@ async def import_keys(request: Request, authorized: bool = Depends(require_auth)
     tasks = []
     # 检查重复的键
     duplicate_keys = []
-    with get_cursor() as cursor:
+    with get_db_session() as session:
         for key in keys:
-            cursor.execute("SELECT key FROM api_keys WHERE key = ?", (key,))
-            if cursor.fetchone():
+            query = select(ApiKey).where(ApiKey.key == key)
+            existing_key = session.execute(query).scalar_one_or_none()
+            if existing_key:
                 duplicate_keys.append(key)
     
     # 准备任务
@@ -383,9 +521,9 @@ async def import_keys(request: Request, authorized: bool = Depends(require_auth)
 
 @app.post("/refresh")
 async def refresh_keys(authorized: bool = Depends(require_auth)):
-    with get_cursor() as cursor:
-        cursor.execute("SELECT key FROM api_keys")
-        all_keys = [row[0] for row in cursor.fetchall()]
+    with get_db_session() as session:
+        query = select(ApiKey)
+        all_keys = [key.key for key in session.execute(query).scalars().all()]
 
     # Create tasks for parallel validation
     tasks = [validate_key_async(key) for key in all_keys]
@@ -394,13 +532,15 @@ async def refresh_keys(authorized: bool = Depends(require_auth)):
     removed = 0
     for key, (valid, balance) in zip(all_keys, results):
         if valid and float(balance) > 0:
-            with get_cursor() as cursor:
-                cursor.execute(
-                    "UPDATE api_keys SET balance = ? WHERE key = ?", (balance, key)
-                )
+            with get_db_session() as session:
+                query = select(ApiKey).where(ApiKey.key == key)
+                api_key = session.execute(query).scalar_one_or_none()
+                if api_key:
+                    api_key.balance = balance
         else:
-            with get_cursor() as cursor:
-                cursor.execute("DELETE FROM api_keys WHERE key = ?", (key,))
+            with get_db_session() as session:
+                delete_query = ApiKey.__table__.delete().where(ApiKey.key == key)
+                session.execute(delete_query)
                 removed += 1
 
     return JSONResponse(
@@ -418,6 +558,7 @@ async def stream_response(api_key: str, req_json: dict, headers: dict):
     
     async with aiohttp.ClientSession() as session:
         try:
+            logger.info(f"开始流式请求: 模型={model}")
             async with session.post(
                 f"{BASE_URL}/v1/chat/completions",
                 headers=headers,
@@ -426,6 +567,7 @@ async def stream_response(api_key: str, req_json: dict, headers: dict):
             ) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
+                    logger.error(f"流式请求失败: {resp.status} - {error_text}")
                     yield f"data: {json.dumps({'error': error_text})}\n\n".encode('utf-8')
                     return
                 
@@ -449,10 +591,10 @@ async def stream_response(api_key: str, req_json: dict, headers: dict):
                                             prompt_tokens = usage.get('prompt_tokens', 0)
                                             completion_tokens = usage.get('completion_tokens', 0)
                                             total_tokens = usage.get('total_tokens', 0)
-                                    except:
+                                    except json.JSONDecodeError:
                                         pass
                         except Exception as e:
-                            print(f"Error processing line: {e}")
+                            logger.error(f"处理响应行时出错: {str(e)}")
                             continue
                 
                 # 发送结束标记
@@ -468,9 +610,13 @@ async def stream_response(api_key: str, req_json: dict, headers: dict):
                     total_tokens,
                 )
                 
+                logger.info(f"流式请求完成: 模型={model}, 输入tokens={prompt_tokens}, 输出tokens={completion_tokens}, 总tokens={total_tokens}")
+                
         except asyncio.TimeoutError:
+            logger.error("流式请求超时")
             yield f"data: {json.dumps({'error': '请求超时'})}\n\n".encode('utf-8')
         except Exception as e:
+            logger.error(f"流式请求出错: {str(e)}", exc_info=True)
             yield f"data: {json.dumps({'error': str(e)})}\n\n".encode('utf-8')
 
 @app.post("/v1/chat/completions")
@@ -493,9 +639,9 @@ async def chat_completions(request: Request):
             raise HTTPException(status_code=401, detail="无效的 API 密钥")
     
     # 获取并验证可用的密钥
-    with get_cursor() as cursor:
-        cursor.execute("SELECT key FROM api_keys")
-        keys = [row[0] for row in cursor.fetchall()]
+    with get_db_session() as session:
+        query = select(ApiKey.key)
+        keys = session.execute(query).scalars().all()
     
     if not keys:
         raise HTTPException(status_code=500, detail="没有可用的API密钥")
@@ -504,19 +650,24 @@ async def chat_completions(request: Request):
     selected_key = random.choice(keys)
     
     # 更新使用计数
-    with get_cursor() as cursor:
-        cursor.execute(
-            "UPDATE api_keys SET usage_count = usage_count + 1 WHERE key = ?", 
-            (selected_key,)
-        )
+    with get_db_session() as session:
+        query = select(ApiKey).where(ApiKey.key == selected_key)
+        api_key = session.execute(query).scalar_one_or_none()
+        if api_key:
+            api_key.usage_count += 1
     
     # 解析请求体
-    body = await request.json()
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        logger.error("无法解析JSON请求体")
+        raise HTTPException(status_code=400, detail="无效的JSON请求")
     
     # 获取模型名称，确保它不为空
     model = body.get("model", "")
     if not model:
         model = "gpt-4o"  # 设置默认模型名称
+        body["model"] = model
     
     # 记录请求时间
     call_time_stamp = time.time()
@@ -529,6 +680,9 @@ async def chat_completions(request: Request):
         "Authorization": f"Bearer {selected_key}",
         "Content-Type": "application/json",
     }
+    
+    # 记录请求开始
+    logger.info(f"开始处理请求: 模型={model}, 流式={is_stream}")
     
     if is_stream:
         # 处理流式响应
@@ -545,31 +699,53 @@ async def chat_completions(request: Request):
         # 处理非流式响应
         try:
             async with aiohttp.ClientSession() as session:
+                # 设置更合理的超时
+                timeout = aiohttp.ClientTimeout(total=300, sock_connect=10, sock_read=300)
+                
                 async with session.post(
-                    "https://api.siliconflow.cn/v1/chat/completions",
+                    f"{BASE_URL}/v1/chat/completions",
                     headers=headers,
                     json=body,
-                    timeout=120,
+                    timeout=timeout,
                 ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(f"请求失败: {response.status} - {error_text}")
+                        raise HTTPException(
+                            status_code=response.status,
+                            detail=f"API请求失败: {error_text}"
+                        )
+                    
                     response_data = await response.json()
                     
                     # 计算 token 使用量
                     usage = response_data.get("usage", {})
                     prompt_tokens = usage.get("prompt_tokens", 0)
                     completion_tokens = usage.get("completion_tokens", 0)
+                    total_tokens = prompt_tokens + completion_tokens
                     
                     # 记录使用情况
                     log_completion(
                         selected_key,
-                        model,  # 使用请求中的模型名称
+                        model,
                         call_time_stamp,
                         prompt_tokens,
                         completion_tokens,
-                        prompt_tokens + completion_tokens,
+                        total_tokens,
                     )
                     
+                    logger.info(f"请求完成: 模型={model}, 输入tokens={prompt_tokens}, 输出tokens={completion_tokens}, 总tokens={total_tokens}")
+                    
                     return JSONResponse(response_data)
+        
+        except aiohttp.ClientError as e:
+            logger.error(f"HTTP客户端错误: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=502, detail=f"上游服务请求失败: {str(e)}")
+        except asyncio.TimeoutError:
+            logger.error(f"请求超时")
+            raise HTTPException(status_code=504, detail="请求超时")
         except Exception as e:
+            logger.error(f"处理请求时出错: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"请求处理失败: {str(e)}")
 
 async def direct_stream_response(api_key: str, body: bytes, headers: dict):
@@ -626,9 +802,9 @@ async def embeddings(request: Request):
         if request_api_key != f"Bearer {API_KEY}":
             raise HTTPException(status_code=403, detail="无效的API_KEY")
     
-    with get_cursor() as cursor:
-        cursor.execute("SELECT key FROM api_keys")
-        keys = [row[0] for row in cursor.fetchall()]
+    with get_db_session() as session:
+        query = select(ApiKey.key)
+        keys = session.execute(query).scalars().all()
     
     if not keys:
         raise HTTPException(status_code=500, detail="没有可用的api-key")
@@ -652,46 +828,78 @@ async def embeddings(request: Request):
 
 @app.get("/v1/models")
 async def list_models(request: Request):
-    with get_cursor() as cursor:
-        cursor.execute("SELECT key FROM api_keys")
-        keys = [row[0] for row in cursor.fetchall()]
-    
-    if not keys:
-        raise HTTPException(status_code=500, detail="没有可用的api-key")
-    
-    selected = random.choice(keys)
-    forward_headers = dict(request.headers)
-    forward_headers["Authorization"] = f"Bearer {selected}"
     try:
+        # 获取可用的key列表
+        with get_db_session() as session:
+            query = select(ApiKey.key)
+            keys = session.execute(query).scalars().all()
+        
+        if not keys:
+            logger.error("没有可用的API密钥用于models请求")
+            raise HTTPException(status_code=500, detail="没有可用的api-key")
+        
+        # 随机选择一个密钥
+        selected = random.choice(keys)
+        
+        # 转发请求
+        forward_headers = dict(request.headers)
+        forward_headers["Authorization"] = f"Bearer {selected}"
+        
+        logger.info("开始获取可用模型列表")
+        
         async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{BASE_URL}/v1/models", headers=forward_headers, timeout=30
-            ) as resp:
-                data = await resp.json()
-                return JSONResponse(content=data, status_code=resp.status)
+            # 设置更合理的超时
+            timeout = aiohttp.ClientTimeout(total=30, sock_connect=10, sock_read=30)
+            
+            try:
+                async with session.get(
+                    f"{BASE_URL}/v1/models", 
+                    headers=forward_headers, 
+                    timeout=timeout
+                ) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        logger.error(f"获取模型列表失败: {resp.status} - {error_text}")
+                        return JSONResponse(
+                            content={"error": {"message": error_text}},
+                            status_code=resp.status
+                        )
+                    
+                    data = await resp.json()
+                    logger.info(f"获取模型列表成功")
+                    return JSONResponse(content=data, status_code=resp.status)
+            
+            except aiohttp.ClientError as e:
+                logger.error(f"获取模型列表HTTP客户端错误: {str(e)}", exc_info=True)
+                raise HTTPException(status_code=502, detail=f"上游服务请求失败: {str(e)}")
+            except asyncio.TimeoutError:
+                logger.error(f"获取模型列表请求超时")
+                raise HTTPException(status_code=504, detail="请求超时")
+    
     except Exception as e:
+        logger.error(f"处理models请求时出错: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"请求转发失败: {str(e)}")
 
 
 @app.get("/stats")
 async def stats(authorized: bool = Depends(require_auth)):
     try:
-        with get_cursor() as cursor:
+        with get_db_session() as session:
             # 获取密钥数量和总余额
-            cursor.execute("SELECT COUNT(*), COALESCE(SUM(balance), 0) FROM api_keys")
-            key_count, total_balance = cursor.fetchone()
+            count_query = select(func.count(), func.sum(ApiKey.balance)).select_from(ApiKey)
+            key_count, total_balance = session.execute(count_query).one_or_none() or (0, 0)
             
             # 获取总调用次数（logs表中的记录数）
-            cursor.execute("SELECT COUNT(*) FROM logs")
-            total_calls = cursor.fetchone()[0]
+            calls_query = select(func.count()).select_from(Log)
+            total_calls = session.execute(calls_query).scalar() or 0
             
             # 获取总tokens消耗（logs表中total_tokens字段的总和）
-            cursor.execute("SELECT COALESCE(SUM(total_tokens), 0) FROM logs")
-            total_tokens = cursor.fetchone()[0]
+            tokens_query = select(func.sum(Log.total_tokens)).select_from(Log)
+            total_tokens = session.execute(tokens_query).scalar() or 0
         
         return JSONResponse({
             "key_count": key_count, 
-            "total_balance": total_balance,
+            "total_balance": total_balance or 0,
             "total_calls": total_calls,
             "total_tokens": total_tokens
         })
@@ -702,11 +910,11 @@ async def stats(authorized: bool = Depends(require_auth)):
 
 @app.get("/export_keys")
 async def export_keys(authorized: bool = Depends(require_auth)):
-    with get_cursor() as cursor:
-        cursor.execute("SELECT key FROM api_keys")
-        all_keys = cursor.fetchall()
+    with get_db_session() as session:
+        query = select(ApiKey.key)
+        all_keys = session.execute(query).scalars().all()
     
-    keys = "\n".join(row[0] for row in all_keys)
+    keys = "\n".join(all_keys)
     headers = {"Content-Disposition": "attachment; filename=keys.txt"}
     return Response(content=keys, media_type="text/plain", headers=headers)
 
@@ -717,34 +925,31 @@ async def get_logs(page: int = 1, authorized: bool = Depends(require_auth)):
     offset = (page - 1) * page_size
     
     try:
-        with get_cursor() as cursor:
+        with get_db_session() as session:
             # 获取总记录数
-            cursor.execute("SELECT COUNT(*) FROM logs")
-            total = cursor.fetchone()[0]
+            count_query = select(func.count()).select_from(Log)
+            total = session.execute(count_query).scalar() or 0
             
             # 获取分页数据
-            cursor.execute(
-                """
-                SELECT used_key, model, call_time, input_tokens, output_tokens, total_tokens 
-                FROM logs 
-                ORDER BY call_time DESC 
-                LIMIT ? OFFSET ?
-                """,
-                (page_size, offset)
+            query = (
+                select(Log.used_key, Log.model, Log.call_time, Log.input_tokens, Log.output_tokens, Log.total_tokens)
+                .order_by(desc(Log.call_time))
+                .limit(page_size)
+                .offset(offset)
             )
-            logs = cursor.fetchall()
-        
-        # 格式化日志数据
-        formatted_logs = []
-        for log in logs:
-            formatted_logs.append({
-                "api_key": log[0],
-                "model": log[1] or "未知",  # 如果 model 为 None 或空字符串，则显示"未知"
-                "call_time": log[2],
-                "input_tokens": log[3],
-                "output_tokens": log[4],
-                "total_tokens": log[5]
-            })
+            result = session.execute(query).all()
+            
+            # 格式化日志数据
+            formatted_logs = []
+            for log in result:
+                formatted_logs.append({
+                    "api_key": log[0],
+                    "model": log[1] or "未知",  # 如果 model 为 None 或空字符串，则显示"未知"
+                    "call_time": log[2],
+                    "input_tokens": log[3],
+                    "output_tokens": log[4],
+                    "total_tokens": log[5]
+                })
         
         return JSONResponse({
             "logs": formatted_logs,
@@ -760,11 +965,9 @@ async def get_logs(page: int = 1, authorized: bool = Depends(require_auth)):
 @app.post("/clear_logs")
 async def clear_logs(authorized: bool = Depends(require_auth)):
     try:
-        with get_cursor() as cursor:
-            cursor.execute("DELETE FROM logs")
-        
-        with get_cursor() as cursor:
-            cursor.execute("VACUUM")
+        with get_db_session() as session:
+            delete_query = Log.__table__.delete()
+            session.execute(delete_query)
         
         return JSONResponse({"message": "日志已清空"})
     except Exception as e:
@@ -787,26 +990,36 @@ async def get_keys(
     page_size = 10
     offset = (page - 1) * page_size
 
-    with get_cursor() as cursor:
-        cursor.execute("SELECT COUNT(*) FROM api_keys")
-        total = cursor.fetchone()[0]
-
-        cursor.execute(
-            f"SELECT key, add_time, balance, usage_count FROM api_keys ORDER BY {sort_field} {sort_order} LIMIT ? OFFSET ?",
-            (page_size, offset),
+    with get_db_session() as session:
+        # 获取总记录数
+        count_query = select(func.count()).select_from(ApiKey)
+        total = session.execute(count_query).scalar() or 0
+        
+        # 构建排序条件
+        if sort_order == "asc":
+            order_by_clause = asc(getattr(ApiKey, sort_field))
+        else:
+            order_by_clause = desc(getattr(ApiKey, sort_field))
+        
+        # 获取分页数据
+        query = (
+            select(ApiKey)
+            .order_by(order_by_clause)
+            .limit(page_size)
+            .offset(offset)
         )
-        keys = cursor.fetchall()
-
-    # Format keys as list of dicts
-    key_list = [
-        {
-            "key": row[0],
-            "add_time": row[1],
-            "balance": row[2],
-            "usage_count": row[3]
-        }
-        for row in keys
-    ]
+        result = session.execute(query).scalars().all()
+        
+        # 格式化键数据
+        key_list = [
+            {
+                "key": key.key,
+                "add_time": key.add_time,
+                "balance": key.balance,
+                "usage_count": key.usage_count
+            }
+            for key in result
+        ]
 
     return JSONResponse(
         {"keys": key_list, "total": total, "page": page, "page_size": page_size}
@@ -824,41 +1037,39 @@ async def refresh_single_key(request: Request, authorized: bool = Depends(requir
     valid, balance = await validate_key_async(key)
     
     if valid and float(balance) > 0:
-        with get_cursor() as cursor:
-            cursor.execute(
-                "UPDATE api_keys SET balance = ? WHERE key = ?", 
-                (balance, key)
-            )
+        with get_db_session() as session:
+            query = select(ApiKey).where(ApiKey.key == key)
+            api_key = session.execute(query).scalar_one_or_none()
+            if api_key:
+                api_key.balance = balance
         return JSONResponse({"message": "密钥刷新成功", "balance": balance})
     else:
-        with get_cursor() as cursor:
-            cursor.execute("DELETE FROM api_keys WHERE key = ?", (key,))
+        with get_db_session() as session:
+            delete_query = ApiKey.__table__.delete().where(ApiKey.key == key)
+            session.execute(delete_query)
         raise HTTPException(status_code=400, detail="密钥无效或余额为零，已从系统中移除")
 
 @app.get("/api/key_info")
 async def get_key_info(key: str, authorized: bool = Depends(require_auth)):
-    with get_cursor() as cursor:
-        cursor.execute(
-            "SELECT key, balance, usage_count, add_time FROM api_keys WHERE key = ?", 
-            (key,)
-        )
-        result = cursor.fetchone()
+    with get_db_session() as session:
+        query = select(ApiKey).where(ApiKey.key == key)
+        result = session.execute(query).scalar_one_or_none()
     
     if not result:
         raise HTTPException(status_code=404, detail="密钥不存在")
     
     return JSONResponse({
-        "key": result[0],
-        "balance": result[1],
-        "usage_count": result[2],
-        "add_time": result[3]
+        "key": result.key,
+        "balance": result.balance,
+        "usage_count": result.usage_count,
+        "add_time": result.add_time
     })
 
 # Add a general exception handler for uncaught exceptions
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     # Log the error here if needed
-    print(f"Unhandled exception: {str(exc)}")
+    logger.error(f"未处理的异常: {str(exc)}", exc_info=True)
     
     # For API endpoints, return JSON error
     if request.url.path.startswith("/v1/") or request.headers.get("accept") == "application/json":
@@ -886,14 +1097,16 @@ async def get_log_cleanup_config(authorized: bool = Depends(require_auth)):
     return JSONResponse({
         "enabled": LOG_AUTO_CLEAN,
         "retention_days": LOG_RETENTION_DAYS,
-        "interval_hours": LOG_CLEAN_INTERVAL_HOURS
+        "interval_hours": LOG_CLEAN_INTERVAL_HOURS,
+        "backup_enabled": LOG_BACKUP_ENABLED,
+        "backup_dir": LOG_BACKUP_DIR
     })
 
 
 @app.post("/log_cleanup_config")
 async def update_log_cleanup_config(request: Request, authorized: bool = Depends(require_auth)):
     """更新日志清理配置"""
-    global LOG_AUTO_CLEAN, LOG_RETENTION_DAYS, LOG_CLEAN_INTERVAL_HOURS
+    global LOG_AUTO_CLEAN, LOG_RETENTION_DAYS, LOG_CLEAN_INTERVAL_HOURS, LOG_BACKUP_ENABLED, LOG_BACKUP_DIR
     
     try:
         data = await request.json()
@@ -914,12 +1127,31 @@ async def update_log_cleanup_config(request: Request, authorized: bool = Depends
                 raise ValueError("清理间隔必须大于0小时")
             LOG_CLEAN_INTERVAL_HOURS = interval_hours
         
+        # 新增备份配置
+        if "backup_enabled" in data:
+            LOG_BACKUP_ENABLED = bool(data["backup_enabled"])
+        
+        if "backup_dir" in data and data["backup_dir"]:
+            LOG_BACKUP_DIR = str(data["backup_dir"])
+            # 测试目录是否可写
+            try:
+                os.makedirs(LOG_BACKUP_DIR, exist_ok=True)
+                test_file = os.path.join(LOG_BACKUP_DIR, ".test_write")
+                with open(test_file, "w") as f:
+                    f.write("test")
+                os.remove(test_file)
+            except Exception as e:
+                raise ValueError(f"备份目录不可写: {str(e)}")
+        
+        # 返回更新后的配置
         return JSONResponse({
             "message": "日志清理配置已更新",
             "config": {
                 "enabled": LOG_AUTO_CLEAN,
                 "retention_days": LOG_RETENTION_DAYS,
-                "interval_hours": LOG_CLEAN_INTERVAL_HOURS
+                "interval_hours": LOG_CLEAN_INTERVAL_HOURS,
+                "backup_enabled": LOG_BACKUP_ENABLED,
+                "backup_dir": LOG_BACKUP_DIR
             }
         })
     
@@ -929,6 +1161,125 @@ async def update_log_cleanup_config(request: Request, authorized: bool = Depends
         raise HTTPException(status_code=500, detail=f"更新配置失败: {str(e)}")
 
 
+@app.get("/health")
+async def health_check():
+    """健康检查端点，用于监控应用状态"""
+    app_start_time = time.time()
+    health_data = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "version": app.version,
+        "uptime": round(time.time() - app.state.startup_timestamp, 2) if hasattr(app.state, "startup_timestamp") else None,
+    }
+    
+    # 检查数据库状态
+    db_health = check_db_health()
+    health_data["database"] = db_health
+    
+    # 如果数据库不健康，整体状态就不健康
+    if db_health["status"] != "healthy":
+        health_data["status"] = "degraded"
+    
+    # 计算API响应时间
+    health_data["response_time_ms"] = round((time.time() - app_start_time) * 1000, 2)
+    
+    return JSONResponse(content=health_data)
+
+
+@app.get("/metrics")
+async def metrics(authorized: bool = Depends(require_auth)):
+    """提供应用指标数据，需要管理员权限"""
+    try:
+        with get_db_session() as session:
+            # 获取密钥指标
+            key_count_query = select(func.count()).select_from(ApiKey)
+            key_count = session.execute(key_count_query).scalar() or 0
+            
+            key_stats_query = select(
+                func.sum(ApiKey.balance).label("total_balance"),
+                func.avg(ApiKey.balance).label("avg_balance"),
+                func.sum(ApiKey.usage_count).label("total_usage")
+            ).select_from(ApiKey)
+            key_stats_result = session.execute(key_stats_query).one_or_none()
+            
+            # 获取日志指标
+            log_count_query = select(func.count()).select_from(Log)
+            log_count = session.execute(log_count_query).scalar() or 0
+            
+            tokens_query = select(
+                func.sum(Log.input_tokens).label("total_input_tokens"),
+                func.sum(Log.output_tokens).label("total_output_tokens"),
+                func.sum(Log.total_tokens).label("total_tokens")
+            ).select_from(Log)
+            tokens_result = session.execute(tokens_query).one_or_none()
+            
+            # 获取今日统计
+            today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+            today_query = select(
+                func.count().label("today_requests"),
+                func.sum(Log.total_tokens).label("today_tokens")
+            ).select_from(Log).where(Log.call_time >= today_start)
+            today_result = session.execute(today_query).one_or_none()
+            
+            # 获取模型使用情况
+            model_usage_query = select(
+                Log.model,
+                func.count().label("count"),
+                func.sum(Log.total_tokens).label("total_tokens")
+            ).select_from(Log).group_by(Log.model).order_by(desc("count"))
+            model_usage_result = session.execute(model_usage_query).all()
+            
+            # 构建响应
+            metrics_data = {
+                "timestamp": datetime.now().isoformat(),
+                "api_keys": {
+                    "count": key_count,
+                    "total_balance": key_stats_result[0] if key_stats_result else 0,
+                    "average_balance": key_stats_result[1] if key_stats_result else 0,
+                    "total_usage": key_stats_result[2] if key_stats_result else 0
+                },
+                "usage": {
+                    "total_requests": log_count,
+                    "total_input_tokens": tokens_result[0] if tokens_result else 0,
+                    "total_output_tokens": tokens_result[1] if tokens_result else 0,
+                    "total_tokens": tokens_result[2] if tokens_result else 0,
+                },
+                "today": {
+                    "requests": today_result[0] if today_result else 0,
+                    "tokens": today_result[1] if today_result else 0
+                },
+                "model_usage": [
+                    {
+                        "model": item[0] or "unknown",
+                        "request_count": item[1],
+                        "total_tokens": item[2] or 0
+                    }
+                    for item in model_usage_result
+                ],
+                "system": {
+                    "uptime_seconds": round(time.time() - app.state.startup_timestamp, 2) if hasattr(app.state, "startup_timestamp") else None,
+                    "process_memory_mb": round(get_process_memory_mb(), 2)
+                }
+            }
+            
+            return JSONResponse(content=metrics_data)
+    
+    except Exception as e:
+        logger.error(f"获取指标时出错: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取指标失败: {str(e)}")
+
+
+def get_process_memory_mb():
+    """获取当前进程的内存使用量（MB）"""
+    try:
+        import psutil
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        return memory_info.rss / 1024 / 1024  # 转换为MB
+    except ImportError:
+        return 0  # 如果psutil不可用，返回0
+    except Exception:
+        return 0  # 出错时返回0
 if __name__ == "__main__":
     import uvicorn
 
