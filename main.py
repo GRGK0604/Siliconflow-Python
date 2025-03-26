@@ -2256,6 +2256,98 @@ def mask_key(key: str) -> str:
         return "****"
     return f"{key[:4]}...{key[-4:]}"
 
+async def stream_response(api_key: str, req_json: dict, headers: dict):
+    """处理流式响应，将API返回的数据流式传输给客户端。
+    
+    Args:
+        api_key: 使用的API密钥
+        req_json: 请求的JSON数据
+        headers: 请求头
+    """
+    completion_tokens = 0
+    prompt_tokens = 0
+    total_tokens = 0
+    call_time_stamp = time.time()
+    model = req_json.get("model", "unknown")
+    
+    logger.debug(f"开始流式请求: 模型={model}")
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(
+                    f"{BASE_URL}/v1/chat/completions",
+                    headers=headers,
+                    json=req_json,
+                    timeout=300,
+                ) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        logger.error(f"流式请求失败: {resp.status} - {error_text}")
+                        yield f"data: {json.dumps({'error': error_text})}\n\n".encode('utf-8')
+                        return
+                    
+                    # 逐行读取响应
+                    async for line in resp.content:
+                        if line:
+                            # 确保每行都是正确的 SSE 格式
+                            try:
+                                line_str = line.decode('utf-8').strip()
+                                if line_str:  # 忽略空行
+                                    if not line_str.startswith('data: '):
+                                        line_str = f"data: {line_str}"
+                                    yield f"{line_str}\n\n".encode('utf-8')
+                                    
+                                    # 尝试解析完成的 tokens
+                                    if line_str.startswith('data: '):
+                                        try:
+                                            data_str = line_str[6:].strip()
+                                            if data_str and data_str != "[DONE]":
+                                                data = json.loads(data_str)
+                                                if 'usage' in data:
+                                                    usage = data['usage']
+                                                    prompt_tokens = usage.get('prompt_tokens', 0)
+                                                    completion_tokens = usage.get('completion_tokens', 0)
+                                                    total_tokens = usage.get('total_tokens', 0)
+                                        except json.JSONDecodeError:
+                                            pass
+                            except Exception as e:
+                                logger.error(f"处理流式响应行时出错: {str(e)}")
+                                continue
+                    
+                    # 发送结束标记
+                    yield "data: [DONE]\n\n".encode('utf-8')
+                    
+                    # 记录使用情况
+                    if prompt_tokens > 0 or completion_tokens > 0 or total_tokens > 0:
+                        await log_completion(
+                            api_key,
+                            model,
+                            call_time_stamp,
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens or (prompt_tokens + completion_tokens),
+                        )
+                        logger.info(f"流式请求完成: 模型={model}, 输入tokens={prompt_tokens}, 输出tokens={completion_tokens}, 总tokens={total_tokens}")
+            
+            except aiohttp.ClientError as e:
+                logger.error(f"流式请求HTTP客户端错误: {str(e)}")
+                error_json = json.dumps({"error": {"message": f"上游服务请求失败: {str(e)}", "type": "upstream_error"}})
+                yield f"data: {error_json}\n\n".encode("utf-8")
+                yield b"data: [DONE]\n\n"
+            
+            except asyncio.TimeoutError:
+                logger.error("流式请求超时")
+                error_json = json.dumps({"error": {"message": "请求超时", "type": "timeout_error"}})
+                yield f"data: {error_json}\n\n".encode("utf-8")
+                yield b"data: [DONE]\n\n"
+                    
+    except Exception as e:
+        logger.error(f"处理流式响应时出错: {str(e)}", exc_info=True)
+        error_json = json.dumps({"error": {"message": str(e), "type": "server_error"}})
+        yield f"data: {error_json}\n\n".encode("utf-8")
+        yield b"data: [DONE]\n\n"
+
 if __name__ == "__main__":
     import uvicorn
 
