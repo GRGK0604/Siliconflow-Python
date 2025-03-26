@@ -72,7 +72,7 @@ def setup_mysql_tables():
 
 def get_sqlite_connection():
     """获取SQLite数据库连接"""
-    sqlite_path = db_config.SQLITE_CONFIG['db_path']
+    sqlite_path = db_config.SQLITE_DB_PATH
     
     # 检查SQLite数据库文件是否存在
     if not os.path.exists(sqlite_path):

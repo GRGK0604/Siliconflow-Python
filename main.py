@@ -18,6 +18,7 @@ import logging
 import logging.handlers
 from sqlalchemy import select, func, desc, asc
 from sqlalchemy.exc import SQLAlchemyError
+import sqlite3
 
 # 导入数据库配置和管理器
 from db_config import (
@@ -26,9 +27,10 @@ from db_config import (
     LOG_RETENTION_DAYS,
     LOG_CLEAN_INTERVAL_HOURS,
     LOG_BACKUP_ENABLED,
-    LOG_BACKUP_DIR
+    LOG_BACKUP_DIR,
+    SQLITE_DB_PATH
 )
-from db_manager import get_db_session, ApiKey, Log, Session as DbSession, check_db_health
+from db_manager import get_db_session, get_async_db_session, ApiKey, Log, Session as DbSession, check_db_health
 
 # 设置日志
 logger = logging.getLogger("main")
@@ -77,79 +79,84 @@ if LOG_BACKUP_ENABLED:
 BASE_URL = "https://api.siliconflow.cn"  # adjust if needed
 
 # 确保数据库目录存在
-os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
+os.makedirs(os.path.dirname(os.path.abspath(SQLITE_DB_PATH)), exist_ok=True)
 
-# SQLite 数据库连接
-conn = sqlite3.connect(
-    DB_PATH, 
-    check_same_thread=DB_CHECK_SAME_THREAD,
-    timeout=DB_TIMEOUT
-)
-conn.execute("PRAGMA journal_mode=WAL")  # 使用WAL模式提高并发性能
-conn.execute("PRAGMA busy_timeout=10000")  # 设置繁忙超时以减少"database is locked"错误
+# SQLite 数据库连接 - 仅在使用SQLite模式时需要
+if DB_TYPE == 'sqlite':
+    # SQLite连接参数
+    DB_CHECK_SAME_THREAD = False
+    DB_TIMEOUT = 30
 
-# 创建一个上下文管理器来处理数据库连接和游标
-@contextmanager
-def get_cursor():
-    cursor = conn.cursor()
-    try:
-        yield cursor
-        conn.commit()
-    except sqlite3.OperationalError as e:
-        conn.rollback()
-        if "database is locked" in str(e):
-            print(f"数据库锁定错误: {str(e)}")
-            raise HTTPException(status_code=503, detail="数据库繁忙，请稍后重试")
-        else:
-            print(f"数据库操作错误: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"数据库操作错误: {str(e)}")
-    except Exception as e:
-        conn.rollback()
-        print(f"游标操作失败: {str(e)}")
-        raise e
-    finally:
-        cursor.close()
-
-# 初始化数据库表
-with get_cursor() as cursor:
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS api_keys (
-        key TEXT PRIMARY KEY,
-        add_time REAL,
-        balance REAL,
-        usage_count INTEGER,
-        enabled INTEGER DEFAULT 1
+    conn = sqlite3.connect(
+        SQLITE_DB_PATH, 
+        check_same_thread=DB_CHECK_SAME_THREAD,
+        timeout=DB_TIMEOUT
     )
-    """)
+    conn.execute("PRAGMA journal_mode=WAL")  # 使用WAL模式提高并发性能
+    conn.execute("PRAGMA busy_timeout=10000")  # 设置繁忙超时以减少"database is locked"错误
 
-    # Create logs table for recording completion calls
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        used_key TEXT,
-        model TEXT,
-        call_time REAL,
-        input_tokens INTEGER,
-        output_tokens INTEGER,
-        total_tokens INTEGER
-    )
-    """)
+    # 创建一个上下文管理器来处理数据库连接和游标
+    @contextmanager
+    def get_cursor():
+        cursor = conn.cursor()
+        try:
+            yield cursor
+            conn.commit()
+        except sqlite3.OperationalError as e:
+            conn.rollback()
+            if "database is locked" in str(e):
+                print(f"数据库锁定错误: {str(e)}")
+                raise HTTPException(status_code=503, detail="数据库繁忙，请稍后重试")
+            else:
+                print(f"数据库操作错误: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"数据库操作错误: {str(e)}")
+        except Exception as e:
+            conn.rollback()
+            print(f"游标操作失败: {str(e)}")
+            raise e
+        finally:
+            cursor.close()
 
-    # Create sessions table for storing user sessions
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS sessions (
-        session_id TEXT PRIMARY KEY,
-        username TEXT,
-        created_at REAL
-    )
-    """)
+    # 初始化数据库表
+    with get_cursor() as cursor:
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS api_keys (
+            key TEXT PRIMARY KEY,
+            add_time REAL,
+            balance REAL,
+            usage_count INTEGER,
+            enabled INTEGER DEFAULT 1
+        )
+        """)
 
-    # 添加索引以提高查询性能
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_call_time ON logs(call_time)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at)")
+        # Create logs table for recording completion calls
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            used_key TEXT,
+            model TEXT,
+            call_time REAL,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            total_tokens INTEGER
+        )
+        """)
+
+        # Create sessions table for storing user sessions
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id TEXT PRIMARY KEY,
+            username TEXT,
+            created_at REAL
+        )
+        """)
+
+        # 添加索引以提高查询性能
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_call_time ON logs(call_time)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at)")
 
 # 备份日志到文件
-def backup_logs(cutoff_timestamp):
+async def backup_logs(cutoff_timestamp):
     """将要删除的日志备份到文件中"""
     if not LOG_BACKUP_ENABLED:
         return
@@ -164,10 +171,11 @@ def backup_logs(cutoff_timestamp):
         )
         
         # 查询需要备份的日志
-        with get_db_session() as session:
+        async for session in get_async_db_session():
             # 查询旧日志
             query = select(Log).where(Log.call_time < cutoff_timestamp)
-            logs = session.execute(query).scalars().all()
+            result = await session.execute(query)
+            logs = result.scalars().all()
             
             # 写入CSV文件
             if logs:
@@ -197,18 +205,19 @@ async def auto_clean_logs():
                 
                 # 如果启用了备份，先备份日志
                 if LOG_BACKUP_ENABLED:
-                    backup_logs(retention_timestamp)
+                    await backup_logs(retention_timestamp)
                 
                 # 删除旧日志
-                with get_db_session() as session:
+                async for session in get_async_db_session():
                     # 先计算要删除的记录数
                     count_query = select(func.count()).select_from(Log).where(Log.call_time < retention_timestamp)
-                    count_to_delete = session.execute(count_query).scalar() or 0
+                    result = await session.execute(count_query)
+                    count_to_delete = result.scalar() or 0
                     
                     if count_to_delete > 0:
                         # 删除旧日志
                         delete_query = Log.__table__.delete().where(Log.call_time < retention_timestamp)
-                        result = session.execute(delete_query)
+                        result = await session.execute(delete_query)
                         deleted_count = result.rowcount
                         
                         # 记录清理操作
@@ -237,9 +246,10 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     logger.info("应用关闭，清理资源...")
-    if conn:
+    # 仅在SQLite模式下关闭连接
+    if DB_TYPE == 'sqlite' and 'conn' in globals():
         conn.close()
-        print("数据库连接已关闭")
+        print("SQLite数据库连接已关闭")
 
 # Custom exception handlers
 @app.exception_handler(StarletteHTTPException)
@@ -279,9 +289,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 # Authentication functions
-def create_session(username: str) -> str:
+async def create_session(username: str) -> str:
     session_id = secrets.token_hex(16)
-    with get_db_session() as session:
+    async for session in get_async_db_session():
         db_session = DbSession(
             session_id=session_id,
             username=username,
@@ -292,51 +302,51 @@ def create_session(username: str) -> str:
     return session_id
 
 
-def validate_session(session_id: str = Cookie(None)) -> bool:
+async def validate_session(session_id: str = Cookie(None)) -> bool:
     if not session_id:
         return False
     
     # 清理旧会话
     try:
-        with get_db_session() as session:
+        async for session in get_async_db_session():
             # 删除过期会话（24小时前）
             delete_query = DbSession.__table__.delete().where(DbSession.created_at < time.time() - 86400)
-            session.execute(delete_query)
+            await session.execute(delete_query)
     except Exception as e:
         logger.error(f"清理过期会话时出错: {str(e)}")
     
     # 检查当前会话
     try:
-        with get_db_session() as session:
+        async for session in get_async_db_session():
             query = select(DbSession).where(DbSession.session_id == session_id)
-            result = session.execute(query).scalar_one_or_none()
-            return bool(result)
+            result = await session.execute(query)
+            return bool(result.scalar_one_or_none())
     except Exception as e:
         logger.error(f"验证会话时出错: {str(e)}")
         return False
 
 
-def require_auth(session_id: str = Cookie(None)):
+async def require_auth(session_id: str = Cookie(None)):
     """验证用户是否已登录，如果未登录则抛出401异常"""
     if not session_id:
         raise HTTPException(status_code=401, detail="未授权访问，请先登录")
     
     # 清理过期会话
     try:
-        with get_db_session() as session:
+        async for session in get_async_db_session():
             # 删除过期会话（24小时前）
             delete_query = DbSession.__table__.delete().where(DbSession.created_at < time.time() - 86400)
-            session.execute(delete_query)
+            await session.execute(delete_query)
     except Exception as e:
         logger.error(f"清理过期会话时出错: {str(e)}")
     
     # 检查当前会话
     try:
-        with get_db_session() as session:
+        async for session in get_async_db_session():
             query = select(DbSession).where(DbSession.session_id == session_id)
-            result = session.execute(query).scalar_one_or_none()
+            result = await session.execute(query)
             
-            if not result:
+            if not result.scalar_one_or_none():
                 raise HTTPException(status_code=401, detail="会话已过期，请重新登录")
     except SQLAlchemyError as e:
         logger.error(f"检查会话时出错: {str(e)}")
@@ -429,7 +439,7 @@ async def login(request: Request):
     password = data.get("password")
     
     if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-        session_id = create_session(username)
+        session_id = await create_session(username)
         response = JSONResponse({"message": "登录成功"})
         response.set_cookie(
             key="session_id",
@@ -884,18 +894,26 @@ async def list_models(request: Request):
 @app.get("/stats")
 async def stats(authorized: bool = Depends(require_auth)):
     try:
-        with get_db_session() as session:
+        key_count = 0
+        total_balance = 0
+        total_calls = 0
+        total_tokens = 0
+        
+        async for session in get_async_db_session():
             # 获取密钥数量和总余额
             count_query = select(func.count(), func.sum(ApiKey.balance)).select_from(ApiKey)
-            key_count, total_balance = session.execute(count_query).one_or_none() or (0, 0)
+            result = await session.execute(count_query)
+            key_count, total_balance = result.one_or_none() or (0, 0)
             
             # 获取总调用次数（logs表中的记录数）
             calls_query = select(func.count()).select_from(Log)
-            total_calls = session.execute(calls_query).scalar() or 0
+            result = await session.execute(calls_query)
+            total_calls = result.scalar() or 0
             
             # 获取总tokens消耗（logs表中total_tokens字段的总和）
             tokens_query = select(func.sum(Log.total_tokens)).select_from(Log)
-            total_tokens = session.execute(tokens_query).scalar() or 0
+            result = await session.execute(tokens_query)
+            total_tokens = result.scalar() or 0
         
         return JSONResponse({
             "key_count": key_count, 
@@ -910,9 +928,11 @@ async def stats(authorized: bool = Depends(require_auth)):
 
 @app.get("/export_keys")
 async def export_keys(authorized: bool = Depends(require_auth)):
-    with get_db_session() as session:
+    all_keys = []
+    async for session in get_async_db_session():
         query = select(ApiKey.key)
-        all_keys = session.execute(query).scalars().all()
+        result = await session.execute(query)
+        all_keys = result.scalars().all()
     
     keys = "\n".join(all_keys)
     headers = {"Content-Disposition": "attachment; filename=keys.txt"}
@@ -925,10 +945,14 @@ async def get_logs(page: int = 1, authorized: bool = Depends(require_auth)):
     offset = (page - 1) * page_size
     
     try:
-        with get_db_session() as session:
+        total = 0
+        formatted_logs = []
+        
+        async for session in get_async_db_session():
             # 获取总记录数
             count_query = select(func.count()).select_from(Log)
-            total = session.execute(count_query).scalar() or 0
+            result = await session.execute(count_query)
+            total = result.scalar() or 0
             
             # 获取分页数据
             query = (
@@ -937,10 +961,9 @@ async def get_logs(page: int = 1, authorized: bool = Depends(require_auth)):
                 .limit(page_size)
                 .offset(offset)
             )
-            result = session.execute(query).all()
+            result = await session.execute(query)
             
             # 格式化日志数据
-            formatted_logs = []
             for log in result:
                 formatted_logs.append({
                     "api_key": log[0],
@@ -965,9 +988,9 @@ async def get_logs(page: int = 1, authorized: bool = Depends(require_auth)):
 @app.post("/clear_logs")
 async def clear_logs(authorized: bool = Depends(require_auth)):
     try:
-        with get_db_session() as session:
+        async for session in get_async_db_session():
             delete_query = Log.__table__.delete()
-            session.execute(delete_query)
+            await session.execute(delete_query)
         
         return JSONResponse({"message": "日志已清空"})
     except Exception as e:
@@ -990,10 +1013,14 @@ async def get_keys(
     page_size = 10
     offset = (page - 1) * page_size
 
-    with get_db_session() as session:
+    total = 0
+    key_list = []
+    
+    async for session in get_async_db_session():
         # 获取总记录数
         count_query = select(func.count()).select_from(ApiKey)
-        total = session.execute(count_query).scalar() or 0
+        result = await session.execute(count_query)
+        total = result.scalar() or 0
         
         # 构建排序条件
         if sort_order == "asc":
@@ -1008,7 +1035,7 @@ async def get_keys(
             .limit(page_size)
             .offset(offset)
         )
-        result = session.execute(query).scalars().all()
+        result = await session.execute(query)
         
         # 格式化键数据
         key_list = [
@@ -1018,7 +1045,7 @@ async def get_keys(
                 "balance": key.balance,
                 "usage_count": key.usage_count
             }
-            for key in result
+            for key in result.scalars().all()
         ]
 
     return JSONResponse(
@@ -1037,32 +1064,35 @@ async def refresh_single_key(request: Request, authorized: bool = Depends(requir
     valid, balance = await validate_key_async(key)
     
     if valid and float(balance) > 0:
-        with get_db_session() as session:
+        async for session in get_async_db_session():
             query = select(ApiKey).where(ApiKey.key == key)
-            api_key = session.execute(query).scalar_one_or_none()
+            result = await session.execute(query)
+            api_key = result.scalar_one_or_none()
             if api_key:
                 api_key.balance = balance
         return JSONResponse({"message": "密钥刷新成功", "balance": balance})
     else:
-        with get_db_session() as session:
+        async for session in get_async_db_session():
             delete_query = ApiKey.__table__.delete().where(ApiKey.key == key)
-            session.execute(delete_query)
+            await session.execute(delete_query)
         raise HTTPException(status_code=400, detail="密钥无效或余额为零，已从系统中移除")
 
 @app.get("/api/key_info")
 async def get_key_info(key: str, authorized: bool = Depends(require_auth)):
-    with get_db_session() as session:
+    result_key = None
+    async for session in get_async_db_session():
         query = select(ApiKey).where(ApiKey.key == key)
-        result = session.execute(query).scalar_one_or_none()
+        result = await session.execute(query)
+        result_key = result.scalar_one_or_none()
     
-    if not result:
+    if not result_key:
         raise HTTPException(status_code=404, detail="密钥不存在")
     
     return JSONResponse({
-        "key": result.key,
-        "balance": result.balance,
-        "usage_count": result.usage_count,
-        "add_time": result.add_time
+        "key": result_key.key,
+        "balance": result_key.balance,
+        "usage_count": result_key.usage_count,
+        "add_time": result_key.add_time
     })
 
 # Add a general exception handler for uncaught exceptions
@@ -1172,7 +1202,7 @@ async def health_check():
         "uptime": round(time.time() - app.state.startup_timestamp, 2) if hasattr(app.state, "startup_timestamp") else None,
     }
     
-    # 检查数据库状态
+    # 检查数据库状态 - 使用同步检查，因为这是专门为健康检查设计的函数
     db_health = check_db_health()
     health_data["database"] = db_health
     
@@ -1190,28 +1220,44 @@ async def health_check():
 async def metrics(authorized: bool = Depends(require_auth)):
     """提供应用指标数据，需要管理员权限"""
     try:
-        with get_db_session() as session:
+        metrics_data = {
+            "timestamp": datetime.now().isoformat(),
+            "api_keys": {},
+            "usage": {},
+            "today": {},
+            "model_usage": [],
+            "system": {
+                "uptime_seconds": round(time.time() - app.state.startup_timestamp, 2) if hasattr(app.state, "startup_timestamp") else None,
+                "process_memory_mb": round(get_process_memory_mb(), 2)
+            }
+        }
+        
+        async for session in get_async_db_session():
             # 获取密钥指标
             key_count_query = select(func.count()).select_from(ApiKey)
-            key_count = session.execute(key_count_query).scalar() or 0
+            result = await session.execute(key_count_query)
+            key_count = result.scalar() or 0
             
             key_stats_query = select(
                 func.sum(ApiKey.balance).label("total_balance"),
                 func.avg(ApiKey.balance).label("avg_balance"),
                 func.sum(ApiKey.usage_count).label("total_usage")
             ).select_from(ApiKey)
-            key_stats_result = session.execute(key_stats_query).one_or_none()
+            result = await session.execute(key_stats_query)
+            key_stats_result = result.one_or_none()
             
             # 获取日志指标
             log_count_query = select(func.count()).select_from(Log)
-            log_count = session.execute(log_count_query).scalar() or 0
+            result = await session.execute(log_count_query)
+            log_count = result.scalar() or 0
             
             tokens_query = select(
                 func.sum(Log.input_tokens).label("total_input_tokens"),
                 func.sum(Log.output_tokens).label("total_output_tokens"),
                 func.sum(Log.total_tokens).label("total_tokens")
             ).select_from(Log)
-            tokens_result = session.execute(tokens_query).one_or_none()
+            result = await session.execute(tokens_query)
+            tokens_result = result.one_or_none()
             
             # 获取今日统计
             today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
@@ -1219,7 +1265,8 @@ async def metrics(authorized: bool = Depends(require_auth)):
                 func.count().label("today_requests"),
                 func.sum(Log.total_tokens).label("today_tokens")
             ).select_from(Log).where(Log.call_time >= today_start)
-            today_result = session.execute(today_query).one_or_none()
+            result = await session.execute(today_query)
+            today_result = result.one_or_none()
             
             # 获取模型使用情况
             model_usage_query = select(
@@ -1227,42 +1274,39 @@ async def metrics(authorized: bool = Depends(require_auth)):
                 func.count().label("count"),
                 func.sum(Log.total_tokens).label("total_tokens")
             ).select_from(Log).group_by(Log.model).order_by(desc("count"))
-            model_usage_result = session.execute(model_usage_query).all()
+            result = await session.execute(model_usage_query)
+            model_usage_result = result.all()
             
             # 构建响应
-            metrics_data = {
-                "timestamp": datetime.now().isoformat(),
-                "api_keys": {
-                    "count": key_count,
-                    "total_balance": key_stats_result[0] if key_stats_result else 0,
-                    "average_balance": key_stats_result[1] if key_stats_result else 0,
-                    "total_usage": key_stats_result[2] if key_stats_result else 0
-                },
-                "usage": {
-                    "total_requests": log_count,
-                    "total_input_tokens": tokens_result[0] if tokens_result else 0,
-                    "total_output_tokens": tokens_result[1] if tokens_result else 0,
-                    "total_tokens": tokens_result[2] if tokens_result else 0,
-                },
-                "today": {
-                    "requests": today_result[0] if today_result else 0,
-                    "tokens": today_result[1] if today_result else 0
-                },
-                "model_usage": [
-                    {
-                        "model": item[0] or "unknown",
-                        "request_count": item[1],
-                        "total_tokens": item[2] or 0
-                    }
-                    for item in model_usage_result
-                ],
-                "system": {
-                    "uptime_seconds": round(time.time() - app.state.startup_timestamp, 2) if hasattr(app.state, "startup_timestamp") else None,
-                    "process_memory_mb": round(get_process_memory_mb(), 2)
-                }
+            metrics_data["api_keys"] = {
+                "count": key_count,
+                "total_balance": key_stats_result[0] if key_stats_result else 0,
+                "average_balance": key_stats_result[1] if key_stats_result else 0,
+                "total_usage": key_stats_result[2] if key_stats_result else 0
             }
             
-            return JSONResponse(content=metrics_data)
+            metrics_data["usage"] = {
+                "total_requests": log_count,
+                "total_input_tokens": tokens_result[0] if tokens_result else 0,
+                "total_output_tokens": tokens_result[1] if tokens_result else 0,
+                "total_tokens": tokens_result[2] if tokens_result else 0,
+            }
+            
+            metrics_data["today"] = {
+                "requests": today_result[0] if today_result else 0,
+                "tokens": today_result[1] if today_result else 0
+            }
+            
+            metrics_data["model_usage"] = [
+                {
+                    "model": item[0] or "unknown",
+                    "request_count": item[1],
+                    "total_tokens": item[2] or 0
+                }
+                for item in model_usage_result
+            ]
+            
+        return JSONResponse(content=metrics_data)
     
     except Exception as e:
         logger.error(f"获取指标时出错: {str(e)}", exc_info=True)
