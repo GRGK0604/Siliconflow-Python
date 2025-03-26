@@ -1,4 +1,4 @@
-﻿# 硅基 KEY 池 (Siliconfig Key Pool)
+﻿# 硅基 KEY 池 (Siliconflow Key Pool)
 
 一个用于管理 SiliconFlow API 密钥的高性能服务，支持MySQL数据库，提供API代理、密钥管理和监控功能。
 
@@ -44,7 +44,7 @@ MYSQL_CONFIG = {
     'port': 3306,
     'user': 'root',
     'password': 'your_password',
-    'database': 'siliconfig',
+    'database': 'siliconflow',
     'charset': 'utf8mb4',
     'pool_size': 10,
     'max_overflow': 20,
