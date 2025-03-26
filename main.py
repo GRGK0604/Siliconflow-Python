@@ -63,6 +63,127 @@ LOGGING_CONFIG["formatters"]["default"]["fmt"] = (
     "%(asctime)s - %(levelprefix)s %(message)s"
 )
 
+# 自动清理日志的函数
+async def auto_clean_logs():
+    """定时清理过期的日志记录"""
+    logger.info(f"日志自动清理任务已启动，将每 {LOG_CLEAN_INTERVAL_HOURS} 小时运行一次")
+    
+    while True:
+        try:
+            if LOG_AUTO_CLEAN:
+                # 计算保留日志的时间戳（当前时间减去保留天数）
+                retention_timestamp = time.time() - (LOG_RETENTION_DAYS * 86400)  # 86400秒 = 1天
+                
+                # 如果启用了备份，先备份日志
+                if LOG_BACKUP_ENABLED:
+                    await backup_logs(retention_timestamp)
+                
+                # 删除旧日志
+                async for session in get_async_db_session():
+                    # 先计算要删除的记录数
+                    count_query = select(func.count()).select_from(Log).where(Log.call_time < retention_timestamp)
+                    result = await session.execute(count_query)
+                    count_to_delete = result.scalar() or 0
+                    
+                    if count_to_delete > 0:
+                        # 删除旧日志
+                        delete_query = Log.__table__.delete().where(Log.call_time < retention_timestamp)
+                        result = await session.execute(delete_query)
+                        deleted_count = result.rowcount
+                        
+                        # 记录清理操作
+                        logger.info(f"自动清理日志：已删除 {deleted_count} 条过期日志记录")
+            
+            # 等待下一次执行
+            next_run = datetime.now() + timedelta(hours=LOG_CLEAN_INTERVAL_HOURS)
+            logger.info(f"下一次日志清理将在 {next_run.strftime('%Y-%m-%d %H:%M:%S')} 进行")
+            
+            # 添加检查任务是否应该停止的功能
+            try:
+                await asyncio.sleep(LOG_CLEAN_INTERVAL_HOURS * 3600)  # 转换为秒
+            except asyncio.CancelledError:
+                logger.info("日志清理任务被取消")
+                break
+        
+        except Exception as e:
+            logger.error(f"日志自动清理出错: {str(e)}")
+            
+            # 同样添加检查是否应该停止的功能
+            try:
+                await asyncio.sleep(3600)  # 发生错误时等待1小时后重试
+            except asyncio.CancelledError:
+                logger.info("日志清理任务被取消")
+                break
+
+# 备份日志到文件
+async def backup_logs(cutoff_timestamp):
+    """将要删除的日志备份到文件中"""
+    if not LOG_BACKUP_ENABLED:
+        return
+    
+    try:
+        # 确保备份目录存在
+        os.makedirs(LOG_BACKUP_DIR, exist_ok=True)
+        
+        backup_filename = os.path.join(
+            LOG_BACKUP_DIR, 
+            f"logs_before_{datetime.fromtimestamp(cutoff_timestamp).strftime('%Y%m%d')}.csv"
+        )
+        
+        # 查询需要备份的日志
+        async for session in get_async_db_session():
+            # 查询旧日志
+            query = select(Log).where(Log.call_time < cutoff_timestamp)
+            result = await session.execute(query)
+            logs = result.scalars().all()
+            
+            # 写入CSV文件
+            if logs:
+                with open(backup_filename, 'w', encoding='utf-8') as f:
+                    # 写入CSV头
+                    f.write("id,used_key,model,call_time,input_tokens,output_tokens,total_tokens\n")
+                    
+                    # 写入数据
+                    for log in logs:
+                        f.write(f"{log.id},{log.used_key},{log.model},{log.call_time},{log.input_tokens},{log.output_tokens},{log.total_tokens}\n")
+                
+                logger.info(f"已备份 {len(logs)} 条日志记录到 {backup_filename}")
+    
+    except Exception as e:
+        logger.error(f"备份日志失败: {str(e)}")
+
+# 定义应用生命周期管理器
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 启动时运行初始化任务
+    app.state.startup_timestamp = time.time()
+    logger.info("应用启动，初始化清理任务...")
+    
+    # 创建日志清理任务
+    cleanup_task = asyncio.create_task(auto_clean_logs())
+    
+    # 将任务保存在应用状态中，以便稍后引用
+    app.state.cleanup_task = cleanup_task
+    
+    yield  # 应用正常运行的部分
+    
+    # 应用关闭时执行清理
+    logger.info("应用关闭，清理资源...")
+    
+    # 取消清理任务
+    if hasattr(app.state, 'cleanup_task') and not app.state.cleanup_task.done():
+        app.state.cleanup_task.cancel()
+        try:
+            await app.state.cleanup_task
+        except asyncio.CancelledError:
+            logger.info("日志清理任务已取消")
+    
+    # 仅在SQLite模式下关闭连接
+    if DB_TYPE == 'sqlite' and 'conn' in globals():
+        conn.close()
+        logger.info("SQLite数据库连接已关闭")
+
+# 创建FastAPI应用
 app = FastAPI(
     title="SiliconFlow API",
     description="SiliconFlow API代理服务",
@@ -70,7 +191,7 @@ app = FastAPI(
     lifespan=lifespan  # 使用lifespan上下文管理器
 )
 
-# Mount static files
+# 挂载静态文件
 app.mount("/static", StaticFiles(directory="static"))
 
 # 确保备份目录存在（如果启用）
@@ -155,126 +276,6 @@ if DB_TYPE == 'sqlite':
         # 添加索引以提高查询性能
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_call_time ON logs(call_time)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at)")
-
-# 备份日志到文件
-async def backup_logs(cutoff_timestamp):
-    """将要删除的日志备份到文件中"""
-    if not LOG_BACKUP_ENABLED:
-        return
-    
-    try:
-        # 确保备份目录存在
-        os.makedirs(LOG_BACKUP_DIR, exist_ok=True)
-        
-        backup_filename = os.path.join(
-            LOG_BACKUP_DIR, 
-            f"logs_before_{datetime.fromtimestamp(cutoff_timestamp).strftime('%Y%m%d')}.csv"
-        )
-        
-        # 查询需要备份的日志
-        async for session in get_async_db_session():
-            # 查询旧日志
-            query = select(Log).where(Log.call_time < cutoff_timestamp)
-            result = await session.execute(query)
-            logs = result.scalars().all()
-            
-            # 写入CSV文件
-            if logs:
-                with open(backup_filename, 'w', encoding='utf-8') as f:
-                    # 写入CSV头
-                    f.write("id,used_key,model,call_time,input_tokens,output_tokens,total_tokens\n")
-                    
-                    # 写入数据
-                    for log in logs:
-                        f.write(f"{log.id},{log.used_key},{log.model},{log.call_time},{log.input_tokens},{log.output_tokens},{log.total_tokens}\n")
-                
-                logger.info(f"已备份 {len(logs)} 条日志记录到 {backup_filename}")
-    
-    except Exception as e:
-        logger.error(f"备份日志失败: {str(e)}")
-
-# 定义应用生命周期管理器
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # 启动时运行初始化任务
-    app.state.startup_timestamp = time.time()
-    logger.info("应用启动，初始化清理任务...")
-    
-    # 创建日志清理任务
-    cleanup_task = asyncio.create_task(auto_clean_logs())
-    
-    # 将任务保存在应用状态中，以便稍后引用
-    app.state.cleanup_task = cleanup_task
-    
-    yield  # 应用正常运行的部分
-    
-    # 应用关闭时执行清理
-    logger.info("应用关闭，清理资源...")
-    
-    # 取消清理任务
-    if hasattr(app.state, 'cleanup_task') and not app.state.cleanup_task.done():
-        app.state.cleanup_task.cancel()
-        try:
-            await app.state.cleanup_task
-        except asyncio.CancelledError:
-            logger.info("日志清理任务已取消")
-    
-    # 仅在SQLite模式下关闭连接
-    if DB_TYPE == 'sqlite' and 'conn' in globals():
-        conn.close()
-        logger.info("SQLite数据库连接已关闭")
-
-# 自动清理日志的函数
-async def auto_clean_logs():
-    """定时清理过期的日志记录"""
-    logger.info(f"日志自动清理任务已启动，将每 {LOG_CLEAN_INTERVAL_HOURS} 小时运行一次")
-    
-    while True:
-        try:
-            if LOG_AUTO_CLEAN:
-                # 计算保留日志的时间戳（当前时间减去保留天数）
-                retention_timestamp = time.time() - (LOG_RETENTION_DAYS * 86400)  # 86400秒 = 1天
-                
-                # 如果启用了备份，先备份日志
-                if LOG_BACKUP_ENABLED:
-                    await backup_logs(retention_timestamp)
-                
-                # 删除旧日志
-                async for session in get_async_db_session():
-                    # 先计算要删除的记录数
-                    count_query = select(func.count()).select_from(Log).where(Log.call_time < retention_timestamp)
-                    result = await session.execute(count_query)
-                    count_to_delete = result.scalar() or 0
-                    
-                    if count_to_delete > 0:
-                        # 删除旧日志
-                        delete_query = Log.__table__.delete().where(Log.call_time < retention_timestamp)
-                        result = await session.execute(delete_query)
-                        deleted_count = result.rowcount
-                        
-                        # 记录清理操作
-                        logger.info(f"自动清理日志：已删除 {deleted_count} 条过期日志记录")
-            
-            # 等待下一次执行
-            next_run = datetime.now() + timedelta(hours=LOG_CLEAN_INTERVAL_HOURS)
-            logger.info(f"下一次日志清理将在 {next_run.strftime('%Y-%m-%d %H:%M:%S')} 进行")
-            
-            # 添加检查任务是否应该停止的功能
-            try:
-                await asyncio.sleep(LOG_CLEAN_INTERVAL_HOURS * 3600)  # 转换为秒
-            except asyncio.CancelledError:
-                logger.info("日志清理任务被取消")
-                break
-        
-        except Exception as e:
-            logger.error(f"日志自动清理出错: {str(e)}")
-            
-            # 同样添加检查是否应该停止的功能
-            try:
-                await asyncio.sleep(3600)  # 发生错误时等待1小时后重试
-            except asyncio.CancelledError:
-                logger.info("日志清理任务被取消")
-                break
 
 # Custom exception handlers
 @app.exception_handler(StarletteHTTPException)
