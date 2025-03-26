@@ -980,7 +980,7 @@
             const data = await response.json();
             document.getElementById("keyCount").textContent = Math.floor(data.key_count || 0);
             document.getElementById("totalBalance").textContent = `¥${parseFloat(data.total_balance || 0).toFixed(2)}`;
-            document.getElementById("totalCalls").textContent = Math.floor(data.total_calls || 0);
+            document.getElementById("totalCalls").textContent = Math.floor(data.total_usage || 0);
             document.getElementById("totalTokens").textContent = Math.floor(data.total_tokens || 0);
         }
         

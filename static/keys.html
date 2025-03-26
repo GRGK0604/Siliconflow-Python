@@ -860,7 +860,7 @@
                             </svg>
                         </div>
                         <div class="stat-content">
-                            <div class="stat-label">总调用次数</div>
+                            <div class="stat-label">总消耗tokens</div>
                             <div class="stat-value" id="totalCallCount">0</div>
                         </div>
                     </div>
@@ -872,7 +872,7 @@
                             </svg>
                         </div>
                         <div class="stat-content">
-                            <div class="stat-label">总tokens消耗</div>
+                            <div class="stat-label">总使用次数</div>
                             <div class="stat-value" id="totalTokens">0</div>
                         </div>
                     </div>
@@ -1036,8 +1036,8 @@
                 const data = await response.json();
                 document.getElementById('totalKeysCount').textContent = data.key_count;
                 document.getElementById('totalBalance').textContent = `¥${parseFloat(data.total_balance).toFixed(2)}`;
-                document.getElementById('totalCallCount').textContent = data.total_calls || 0;
-                document.getElementById('totalTokens').textContent = data.total_tokens || 0;
+                document.getElementById('totalCallCount').textContent = data.total_tokens || 0;
+                document.getElementById('totalTokens').textContent = data.total_usage || 0;
             } catch (error) {
                 console.error('Error fetching stats:', error);
             }
