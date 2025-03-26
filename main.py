@@ -19,6 +19,19 @@ import logging.handlers
 from sqlalchemy import select, func, desc, asc
 from sqlalchemy.exc import SQLAlchemyError
 import sqlite3
+from decimal import Decimal
+
+# 自定义JSON编码器，以处理Decimal类型
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super().default(obj)
+
+# 用于将对象转换为JSON的辅助函数
+def jsonable_encoder(obj):
+    """将对象转换为JSON可序列化的对象"""
+    return json.loads(json.dumps(obj, cls=CustomJSONEncoder))
 
 # 导入数据库配置和管理器
 from db_config import (
@@ -1083,97 +1096,166 @@ async def list_models(request: Request):
 
 
 @app.get("/stats")
-async def stats(authorized: bool = Depends(require_auth)):
+async def get_stats(authorized: bool = Depends(require_auth)):
+    """获取基础统计信息"""
     try:
-        key_count = 0
-        total_balance = 0
-        total_calls = 0
-        total_tokens = 0
-        
+        stats = {}
         async for session in get_async_db_session():
-            # 获取密钥数量和总余额
-            count_query = select(func.count(), func.sum(ApiKey.balance)).select_from(ApiKey)
-            result = await session.execute(count_query)
-            key_count, total_balance = result.one_or_none() or (0, 0)
+            # 获取密钥计数
+            key_count_result = await session.execute(select(func.count()).select_from(ApiKey))
+            stats['key_count'] = key_count_result.scalar() or 0
             
-            # 获取总调用次数（logs表中的记录数）
-            calls_query = select(func.count()).select_from(Log)
-            result = await session.execute(calls_query)
-            total_calls = result.scalar() or 0
+            # 获取总余额
+            total_balance_result = await session.execute(select(func.sum(ApiKey.balance)).select_from(ApiKey))
+            stats['total_balance'] = total_balance_result.scalar() or 0
             
-            # 获取总tokens消耗（logs表中total_tokens字段的总和）
-            tokens_query = select(func.sum(Log.total_tokens)).select_from(Log)
-            result = await session.execute(tokens_query)
-            total_tokens = result.scalar() or 0
+            # 获取调用总次数
+            total_usage_result = await session.execute(select(func.sum(ApiKey.usage_count)).select_from(ApiKey))
+            stats['total_usage'] = total_usage_result.scalar() or 0
+            
+            # 获取模型使用情况统计
+            model_usage_query = select(
+                Log.model, 
+                func.count().label('count'), 
+                func.sum(Log.input_tokens).label('input_tokens'),
+                func.sum(Log.output_tokens).label('output_tokens'),
+                func.sum(Log.total_tokens).label('total_tokens')
+            ).group_by(Log.model)
+            
+            model_usage_result = await session.execute(model_usage_query)
+            model_usage = [
+                {
+                    'model': model or 'unknown',
+                    'count': count,
+                    'input_tokens': input_tokens or 0,
+                    'output_tokens': output_tokens or 0,
+                    'total_tokens': total_tokens or 0
+                }
+                for model, count, input_tokens, output_tokens, total_tokens in model_usage_result
+            ]
+            
+            stats['model_usage'] = model_usage
+            
+            # 获取近30天使用趋势
+            thirty_days_ago = datetime.now() - timedelta(days=30)
+            timestamp = thirty_days_ago.timestamp()
+            
+            daily_usage_query = select(
+                func.strftime('%Y-%m-%d', func.datetime(Log.call_time, 'unixepoch')).label('date'),
+                func.count().label('count'),
+                func.sum(Log.total_tokens).label('tokens')
+            ).where(Log.call_time >= timestamp).group_by('date').order_by('date')
+            
+            daily_usage_result = await session.execute(daily_usage_query)
+            stats['daily_usage'] = [
+                {
+                    'date': date,
+                    'count': count,
+                    'tokens': tokens or 0
+                }
+                for date, count, tokens in daily_usage_result
+            ]
         
-        return JSONResponse({
-            "key_count": key_count, 
-            "total_balance": total_balance or 0,
-            "total_calls": total_calls,
-            "total_tokens": total_tokens
-        })
+        # 使用自定义编码器处理Decimal类型
+        return JSONResponse(content=jsonable_encoder(stats))
+    
     except Exception as e:
-        print(f"获取统计信息时出错: {str(e)}")
+        logger.error(f"获取统计信息时出错: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取统计信息失败: {str(e)}")
 
 
 @app.get("/export_keys")
-async def export_keys(authorized: bool = Depends(require_auth)):
-    all_keys = []
+async def export_keys(authorized: bool = Depends(require_auth), format: str = "text"):
+    """导出所有API密钥的信息，支持text和json两种格式"""
     async for session in get_async_db_session():
-        query = select(ApiKey.key)
+        query = select(ApiKey)
         result = await session.execute(query)
-        all_keys = result.scalars().all()
-    
-    keys = "\n".join(all_keys)
-    headers = {"Content-Disposition": "attachment; filename=keys.txt"}
-    return Response(content=keys, media_type="text/plain", headers=headers)
+        keys = result.scalars().all()
+        
+        if format.lower() == "json":
+            # JSON格式导出
+            data = [
+                {
+                    "key": key.key,
+                    "add_time": key.add_time,
+                    "balance": key.balance,
+                    "usage_count": key.usage_count,
+                    "enabled": key.enabled
+                }
+                for key in keys
+            ]
+            
+            # 使用自定义编码器处理Decimal类型
+            headers = {"Content-Disposition": "attachment; filename=keys.json"}
+            return JSONResponse(content=jsonable_encoder(data), headers=headers)
+        else:
+            # 文本格式导出（默认）
+            key_texts = [key.key for key in keys]
+            keys_text = "\n".join(key_texts)
+            headers = {"Content-Disposition": "attachment; filename=keys.txt"}
+            return Response(content=keys_text, media_type="text/plain", headers=headers)
 
 
 @app.get("/logs")
-async def get_logs(page: int = 1, authorized: bool = Depends(require_auth)):
-    page_size = 10
-    offset = (page - 1) * page_size
-    
+async def logs(
+    page: int = 1, 
+    page_size: int = 50, 
+    sort_field: str = "call_time", 
+    sort_order: str = "desc",
+    authorized: bool = Depends(require_auth)
+):
+    """分页获取使用日志"""
     try:
-        total = 0
-        formatted_logs = []
-        
         async for session in get_async_db_session():
-            # 获取总记录数
+            # 确定总记录数
             count_query = select(func.count()).select_from(Log)
             result = await session.execute(count_query)
             total = result.scalar() or 0
             
-            # 获取分页数据
-            query = (
-                select(Log.used_key, Log.model, Log.call_time, Log.input_tokens, Log.output_tokens, Log.total_tokens)
-                .order_by(desc(Log.call_time))
-                .limit(page_size)
-                .offset(offset)
-            )
-            result = await session.execute(query)
+            # 确定排序
+            if sort_field not in ["call_time", "input_tokens", "output_tokens", "total_tokens"]:
+                sort_field = "call_time"  # 默认排序字段
+                
+            # 获取排序字段
+            sort_column = getattr(Log, sort_field)
+            if sort_order.lower() == "asc":
+                order_by = asc(sort_column)
+            else:
+                order_by = desc(sort_column)
             
-            # 格式化日志数据
-            for log in result:
-                formatted_logs.append({
-                    "api_key": log[0],
-                    "model": log[1] or "未知",  # 如果 model 为 None 或空字符串，则显示"未知"
-                    "call_time": log[2],
-                    "input_tokens": log[3],
-                    "output_tokens": log[4],
-                    "total_tokens": log[5]
-                })
-        
-        return JSONResponse({
-            "logs": formatted_logs,
-            "total": total,
-            "page": page,
-            "page_size": page_size
-        })
+            # 查询对应页的记录
+            offset = (page - 1) * page_size
+            query = select(Log).order_by(order_by).offset(offset).limit(page_size)
+            result = await session.execute(query)
+            logs = result.scalars().all()
+            
+            # 构建分页结果
+            data = {
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": (total + page_size - 1) // page_size,
+                "items": [
+                    {
+                        "id": log.id,
+                        "used_key": log.used_key,
+                        "model": log.model,
+                        "call_time": log.call_time,
+                        "timestamp": datetime.fromtimestamp(log.call_time).strftime("%Y-%m-%d %H:%M:%S"),
+                        "input_tokens": log.input_tokens,
+                        "output_tokens": log.output_tokens,
+                        "total_tokens": log.total_tokens
+                    }
+                    for log in logs
+                ]
+            }
+            
+            # 使用自定义JSON编码器序列化
+            return JSONResponse(content=jsonable_encoder(data))
+            
     except Exception as e:
-        print(f"获取日志时出错: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取日志失败: {str(e)}")
+        logger.error(f"获取使用日志时出错: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取使用日志失败: {str(e)}")
 
 
 @app.post("/clear_logs")
@@ -1189,59 +1271,62 @@ async def clear_logs(authorized: bool = Depends(require_auth)):
 
 
 @app.get("/api/keys")
-async def get_keys(
-    page: int = 1, sort_field: str = "add_time", sort_order: str = "desc", 
+async def api_keys(
+    page: int = 1, 
+    page_size: int = 10, 
+    sort_field: str = "add_time", 
+    sort_order: str = "desc",
     authorized: bool = Depends(require_auth)
 ):
-    allowed_fields = ["add_time", "balance", "usage_count"]
-    allowed_orders = ["asc", "desc"]
-
-    if sort_field not in allowed_fields:
-        sort_field = "add_time"
-    if sort_order not in allowed_orders:
-        sort_order = "desc"
-
-    page_size = 10
-    offset = (page - 1) * page_size
-
-    total = 0
-    key_list = []
-    
-    async for session in get_async_db_session():
-        # 获取总记录数
-        count_query = select(func.count()).select_from(ApiKey)
-        result = await session.execute(count_query)
-        total = result.scalar() or 0
-        
-        # 构建排序条件
-        if sort_order == "asc":
-            order_by_clause = asc(getattr(ApiKey, sort_field))
-        else:
-            order_by_clause = desc(getattr(ApiKey, sort_field))
-        
-        # 获取分页数据
-        query = (
-            select(ApiKey)
-            .order_by(order_by_clause)
-            .limit(page_size)
-            .offset(offset)
-        )
-        result = await session.execute(query)
-        
-        # 格式化键数据
-        key_list = [
-            {
-                "key": key.key,
-                "add_time": key.add_time,
-                "balance": key.balance,
-                "usage_count": key.usage_count
+    """分页获取API密钥列表"""
+    try:
+        async for session in get_async_db_session():
+            # 确定总记录数
+            count_query = select(func.count()).select_from(ApiKey)
+            result = await session.execute(count_query)
+            total = result.scalar() or 0
+            
+            # 确定排序
+            if sort_field not in ["add_time", "balance", "usage_count"]:
+                sort_field = "add_time"  # 默认排序字段
+                
+            # 获取排序字段
+            sort_column = getattr(ApiKey, sort_field)
+            if sort_order.lower() == "asc":
+                order_by = asc(sort_column)
+            else:
+                order_by = desc(sort_column)
+            
+            # 查询对应页的记录
+            offset = (page - 1) * page_size
+            query = select(ApiKey).order_by(order_by).offset(offset).limit(page_size)
+            result = await session.execute(query)
+            keys = result.scalars().all()
+            
+            # 构建分页结果
+            data = {
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": (total + page_size - 1) // page_size,
+                "items": [
+                    {
+                        "key": key.key,
+                        "add_time": key.add_time,
+                        "balance": key.balance,
+                        "usage_count": key.usage_count,
+                        "enabled": key.enabled
+                    }
+                    for key in keys
+                ]
             }
-            for key in result.scalars().all()
-        ]
-
-    return JSONResponse(
-        {"keys": key_list, "total": total, "page": page, "page_size": page_size}
-    )
+            
+            # 使用自定义JSON编码器序列化
+            return JSONResponse(content=jsonable_encoder(data))
+            
+    except Exception as e:
+        logger.error(f"获取API密钥列表时出错: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取API密钥列表失败: {str(e)}")
 
 @app.post("/api/refresh_key")
 async def refresh_single_key(request: Request, authorized: bool = Depends(require_auth)):
@@ -1269,22 +1354,52 @@ async def refresh_single_key(request: Request, authorized: bool = Depends(requir
         raise HTTPException(status_code=400, detail="密钥无效或余额为零，已从系统中移除")
 
 @app.get("/api/key_info")
-async def get_key_info(key: str, authorized: bool = Depends(require_auth)):
-    result_key = None
-    async for session in get_async_db_session():
-        query = select(ApiKey).where(ApiKey.key == key)
-        result = await session.execute(query)
-        result_key = result.scalar_one_or_none()
-    
-    if not result_key:
-        raise HTTPException(status_code=404, detail="密钥不存在")
-    
-    return JSONResponse({
-        "key": result_key.key,
-        "balance": result_key.balance,
-        "usage_count": result_key.usage_count,
-        "add_time": result_key.add_time
-    })
+async def key_info(key: str, authorized: bool = Depends(require_auth)):
+    """获取单个API密钥的详细信息"""
+    try:
+        async for session in get_async_db_session():
+            # 查询API密钥
+            key_query = select(ApiKey).where(ApiKey.key == key)
+            result = await session.execute(key_query)
+            api_key = result.scalar_one_or_none()
+            
+            if not api_key:
+                raise HTTPException(status_code=404, detail="API密钥不存在")
+            
+            # 查询最近的使用记录
+            log_query = select(Log).where(Log.used_key == key).order_by(desc(Log.call_time)).limit(10)
+            result = await session.execute(log_query)
+            logs = result.scalars().all()
+            
+            # 构建API密钥信息
+            key_info = {
+                "key": api_key.key,
+                "add_time": api_key.add_time,
+                "balance": api_key.balance,
+                "usage_count": api_key.usage_count,
+                "enabled": api_key.enabled,
+                "recent_logs": [
+                    {
+                        "id": log.id,
+                        "model": log.model,
+                        "call_time": log.call_time,
+                        "timestamp": datetime.fromtimestamp(log.call_time).strftime("%Y-%m-%d %H:%M:%S"),
+                        "input_tokens": log.input_tokens,
+                        "output_tokens": log.output_tokens,
+                        "total_tokens": log.total_tokens
+                    }
+                    for log in logs
+                ]
+            }
+            
+            # 使用自定义JSON编码器处理Decimal类型
+            return JSONResponse(content=jsonable_encoder(key_info))
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取API密钥信息时出错: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取API密钥信息失败: {str(e)}")
 
 # Add a general exception handler for uncaught exceptions
 @app.exception_handler(Exception)
@@ -1496,8 +1611,9 @@ async def metrics(authorized: bool = Depends(require_auth)):
                 }
                 for item in model_usage_result
             ]
-            
-        return JSONResponse(content=metrics_data)
+        
+        # 使用自定义编码器处理Decimal类型
+        return JSONResponse(content=jsonable_encoder(metrics_data))
     
     except Exception as e:
         logger.error(f"获取指标时出错: {str(e)}", exc_info=True)
