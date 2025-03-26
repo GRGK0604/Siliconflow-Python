@@ -1127,9 +1127,17 @@ async def get_stats(authorized: bool = Depends(require_auth)):
             total_balance_result = await session.execute(select(func.sum(ApiKey.balance)).select_from(ApiKey))
             stats['total_balance'] = total_balance_result.scalar() or 0
             
-            # 获取调用总次数
-            total_usage_result = await session.execute(select(func.sum(ApiKey.usage_count)).select_from(ApiKey))
-            stats['total_usage'] = total_usage_result.scalar() or 0
+            # 获取API密钥使用计数（从ApiKey表）
+            key_usage_result = await session.execute(select(func.sum(ApiKey.usage_count)).select_from(ApiKey))
+            stats['key_usage_count'] = key_usage_result.scalar() or 0
+            
+            # 获取实际调用总次数（从Log表）
+            call_count_result = await session.execute(select(func.count()).select_from(Log))
+            stats['total_usage'] = call_count_result.scalar() or 0
+            
+            # 获取Token总消耗（从Log表）
+            token_count_result = await session.execute(select(func.sum(Log.total_tokens)).select_from(Log))
+            stats['total_tokens'] = token_count_result.scalar() or 0
             
             # 获取模型使用情况统计
             model_usage_query = select(
