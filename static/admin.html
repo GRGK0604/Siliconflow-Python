@@ -911,6 +911,19 @@
                                 <input type="number" id="logCleanupInterval" min="1" value="24" class="form-control">
                                 <small>系统将按此间隔自动执行清理任务</small>
                             </div>
+                            <div class="form-group">
+                                <label class="toggle">
+                                    <input type="checkbox" id="logBackupEnabled">
+                                    <span class="slider"></span>
+                                    <span class="toggle-label">启用日志备份</span>
+                                </label>
+                                <small style="margin-left: 48px;">启用后，在清理前会将要删除的日志备份为CSV文件</small>
+                            </div>
+                            <div class="form-group" id="backupDirGroup" style="display: none;">
+                                <label for="logBackupDir">备份目录:</label>
+                                <input type="text" id="logBackupDir" value="log_backups" class="form-control">
+                                <small>日志备份文件将保存到此目录</small>
+                            </div>
                             <div class="button-group">
                                 <button class="btn-primary" onclick="saveLogCleanupConfig()">保存配置</button>
                                 <button class="btn-secondary" onclick="closeLogCleanupModal()">取消</button>
@@ -1121,6 +1134,11 @@
             document.getElementById('logCleanupModal').style.display = 'none';
         }
         
+        function toggleBackupDirGroup() {
+            const backupEnabled = document.getElementById('logBackupEnabled').checked;
+            document.getElementById('backupDirGroup').style.display = backupEnabled ? 'block' : 'none';
+        }
+        
         function showLogCleanupConfig() {
             // 获取当前配置
             fetch('/log_cleanup_config')
@@ -1129,18 +1147,35 @@
                     document.getElementById('logCleanupEnabled').checked = data.enabled;
                     document.getElementById('logRetentionDays').value = data.retention_days;
                     document.getElementById('logCleanupInterval').value = data.interval_hours;
+                    
+                    // 设置备份选项
+                    if (data.backup_enabled !== undefined) {
+                        document.getElementById('logBackupEnabled').checked = data.backup_enabled;
+                    }
+                    
+                    if (data.backup_dir !== undefined) {
+                        document.getElementById('logBackupDir').value = data.backup_dir;
+                    }
+                    
+                    // 显示/隐藏备份目录输入框
+                    toggleBackupDirGroup();
                     showLogCleanupModal();
                 })
                 .catch(error => {
                     showMessage('获取配置失败: ' + error.message, 'error');
                 });
+                
+            // 添加备份选项切换事件
+            document.getElementById('logBackupEnabled').addEventListener('change', toggleBackupDirGroup);
         }
         
         async function saveLogCleanupConfig() {
             const config = {
                 enabled: document.getElementById('logCleanupEnabled').checked,
                 retention_days: parseInt(document.getElementById('logRetentionDays').value),
-                interval_hours: parseInt(document.getElementById('logCleanupInterval').value)
+                interval_hours: parseInt(document.getElementById('logCleanupInterval').value),
+                backup_enabled: document.getElementById('logBackupEnabled').checked,
+                backup_dir: document.getElementById('logBackupDir').value
             };
             
             try {
