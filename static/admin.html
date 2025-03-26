@@ -1007,10 +1007,56 @@
             messageEl.className = "success";
             messageEl.style.display = 'block';
             
-            const response = await fetch("/refresh", { method: "POST" });
-            const data = await response.json();
-            messageEl.textContent = data.message;
-            fetchStats();
+            try {
+                const response = await fetch("/refresh", { 
+                    method: "POST",
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                // 检查HTTP状态
+                if (!response.ok) {
+                    let errorMsg = `服务器错误 (${response.status})`;
+                    try {
+                        // 尝试解析错误响应
+                        const errorData = await response.json();
+                        if (errorData && errorData.message) {
+                            errorMsg = errorData.message;
+                        } else if (errorData && errorData.detail) {
+                            errorMsg = errorData.detail;
+                        }
+                    } catch (parseError) {
+                        // 如果无法解析JSON，尝试获取文本
+                        try {
+                            const errorText = await response.text();
+                            // 只取文本的前100个字符避免过长
+                            errorMsg = errorText.substring(0, 100);
+                            if (errorText.length > 100) errorMsg += '...';
+                        } catch (textError) {
+                            // 如果连文本都无法获取，使用通用错误消息
+                            errorMsg = `请求失败 (HTTP ${response.status})`;
+                        }
+                    }
+                    throw new Error(errorMsg);
+                }
+                
+                // 解析成功的响应
+                const data = await response.json();
+                const successMsg = data.message || '刷新完成';
+                
+                // 显示结果消息，包括成功和跳过的数量
+                messageEl.innerHTML = `${successMsg}<br><small>刷新完成时间: ${new Date().toLocaleTimeString()}</small>`;
+                messageEl.className = "success";
+                
+                // 更新统计信息
+                fetchStats();
+            } catch (error) {
+                // 显示错误消息
+                messageEl.textContent = `刷新失败: ${error.message}`;
+                messageEl.className = "error";
+                console.error("刷新密钥时出错:", error);
+            }
         }
         
         function exportKeys() {
@@ -1051,7 +1097,7 @@
                 const tbody = document.querySelector("#logsTable tbody");
                 tbody.innerHTML = "";
                 
-                if (data.logs.length === 0) {
+                if (!data || !data.items || !Array.isArray(data.items) || data.items.length === 0) {
                     tbody.innerHTML = `
                         <tr>
                             <td colspan="6" style="text-align: center;">暂无日志记录</td>
@@ -1060,20 +1106,25 @@
                     return;
                 }
                 
-                data.logs.forEach(log => {
+                data.items.forEach(log => {
                     const date = new Date(log.call_time * 1000);
                     const formattedDate = isMobile ? 
                         `${String(date.getMonth()+1).padStart(2,'0')}/${String(date.getDate()).padStart(2,'0')} ${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}` 
                         : date.toLocaleString('zh-CN');
                     
+                    let keyDisplay = 'N/A';
+                    if (log.used_key && typeof log.used_key === 'string' && log.used_key.length >= 8) {
+                        keyDisplay = `${log.used_key.substring(0, 4)}...${log.used_key.substring(log.used_key.length - 4)}`;
+                    }
+                    
                     const tr = document.createElement("tr");
                     tr.innerHTML = `
-                        <td class="key-column">${log.api_key.substring(0, 6)}...${log.api_key.substring(log.api_key.length - 3)}</td>
+                        <td class="key-column">${keyDisplay}</td>
                         <td>${log.model || 'N/A'}</td>
                         <td>${formattedDate}</td>
-                        <td>${log.input_tokens}</td>
-                        <td>${log.output_tokens}</td>
-                        <td>${log.total_tokens}</td>
+                        <td>${log.input_tokens || 0}</td>
+                        <td>${log.output_tokens || 0}</td>
+                        <td>${log.total_tokens || 0}</td>
                     `;
                     tbody.appendChild(tr);
                 });
@@ -1081,29 +1132,34 @@
                 // 更新分页按钮
                 const paginationDiv = document.getElementById("pagination");
                 paginationDiv.innerHTML = "";
-                const totalPages = Math.ceil(data.total / data.page_size);
+                
+                // 确保分页数据存在
+                const totalItems = data.total || 0;
+                const pageSize = data.page_size || 50;
+                const currentPageNum = data.page || 1;
+                const totalPages = Math.ceil(totalItems / pageSize);
                 
                 if (totalPages > 1) {
                     // 添加页码信息
                     const pageInfo = document.createElement("div");
                     pageInfo.className = "pagination-info";
-                    pageInfo.textContent = `第 ${data.page} 页，共 ${totalPages} 页`;
+                    pageInfo.textContent = `第 ${currentPageNum} 页，共 ${totalPages} 页`;
                     paginationDiv.appendChild(pageInfo);
                     
                     // 使用上一页/下一页按钮
                     const prevBtn = document.createElement("button");
                     prevBtn.innerHTML = "&#10094; 上一页";
                     prevBtn.className = "btn-secondary";
-                    prevBtn.disabled = data.page === 1;
-                    prevBtn.onclick = () => fetchLogs(data.page - 1);
+                    prevBtn.disabled = currentPageNum === 1;
+                    prevBtn.onclick = () => fetchLogs(currentPageNum - 1);
                     paginationDiv.appendChild(prevBtn);
                     
                     // 下一页按钮
                     const nextBtn = document.createElement("button");
                     nextBtn.innerHTML = "下一页 &#10095;";
                     nextBtn.className = "btn-secondary";
-                    nextBtn.disabled = data.page === totalPages;
-                    nextBtn.onclick = () => fetchLogs(data.page + 1);
+                    nextBtn.disabled = currentPageNum === totalPages;
+                    nextBtn.onclick = () => fetchLogs(currentPageNum + 1);
                     paginationDiv.appendChild(nextBtn);
                 }
             } catch (error) {
@@ -1113,6 +1169,8 @@
                         <td colspan="6" style="text-align: center;">加载日志失败: ${error.message}</td>
                     </tr>
                 `;
+                // 清空分页
+                document.getElementById("pagination").innerHTML = "";
             }
         }
         

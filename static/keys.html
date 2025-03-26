@@ -28,6 +28,14 @@
             --header-bg: var(--bg-secondary);
             --table-header-bg: rgba(59, 130, 246, 0.05);
             --table-row-hover: rgba(59, 130, 246, 0.03);
+            --primary-color: #4CAF50;
+            --secondary-color: #2196F3;
+            --accent-color: #FF5722;
+            --error-color: #F44336;
+            --dark-bg: #1e1e1e;
+            --light-text: #f5f5f5;
+            --card-bg: #292929;
+            --hover-color: #3e3e3e;
         }
 
         [data-theme="dark"] {
@@ -65,6 +73,7 @@
             --spacing-lg: 1.5rem;
             --spacing-xl: 2rem;
             --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            --animation-duration: 0.3s;
         }
 
         * {
@@ -374,12 +383,52 @@
             margin-bottom: var(--spacing-lg);
             display: none;
             font-size: 0.875rem;
-            animation: fadeIn 0.3s ease;
+            animation: fadeIn var(--animation-duration) ease;
         }
 
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(-10px); }
             to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* 新增行显示动画 */
+        @keyframes fadeInRow {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* 加载中脉冲动画 */
+        @keyframes pulse {
+            0% { opacity: 0.6; }
+            50% { opacity: 1; }
+            100% { opacity: 0.6; }
+        }
+
+        .loading-row {
+            animation: pulse 1.5s infinite;
+        }
+
+        /* 新行淡入效果 */
+        tr.new-row {
+            animation: fadeInRow var(--animation-duration) ease;
+        }
+
+        /* 旋转动画 */
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .spin {
+            animation: spin 1.5s linear infinite;
+            display: inline-block;
+        }
+
+        /* 余额更新动画 */
+        .balance-updated {
+            animation: fadeIn var(--animation-duration) ease;
+            background-color: var(--accent-primary-light);
+            transition: background-color 1.5s ease;
         }
 
         #message.success {
@@ -554,19 +603,23 @@
             gap: var(--spacing-sm);
         }
 
-        .masked-key {
+        .masked-key, .full-key {
             cursor: pointer;
             font-family: monospace;
             font-size: 0.875rem;
+            transition: all var(--animation-duration) ease;
+            display: inline-block;
+            min-width: 120px;
+        }
+
+        .masked-key {
             word-break: keep-all;
             white-space: nowrap;
-            transition: var(--transition);
         }
 
         .full-key {
-            font-family: monospace;
-            font-size: 0.875rem;
             word-break: break-all;
+            white-space: normal;
         }
 
         .copy-btn {
@@ -699,6 +752,27 @@
             .hide-on-mobile {
                 display: none;
             }
+        }
+
+        /* 添加警告消息的样式 */
+        .warning-message {
+            background-color: rgba(255, 152, 0, 0.2);
+            border-left: 4px solid var(--warning-color);
+            padding: 8px 12px;
+            margin: 8px 0;
+            border-radius: 0 4px 4px 0;
+        }
+        
+        .small-text {
+            font-size: 0.85em;
+            opacity: 0.8;
+            margin-top: 4px;
+        }
+        
+        #message.warning {
+            background-color: rgba(255, 152, 0, 0.15);
+            border: 1px solid var(--warning-color);
+            color: #f5f5f5;
         }
     </style>
 </head>
@@ -973,7 +1047,7 @@
         async function loadKeys() {
             try {
                 const tbody = document.querySelector("#keysTable tbody");
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">加载中...</td></tr>';
+                tbody.innerHTML = '<tr class="loading-row"><td colspan="5" style="text-align: center;">加载中...</td></tr>';
                 
                 let url = `/api/keys?page=${currentPage}&sort_field=${currentSortField}&sort_order=${currentSortOrder}`;
                 
@@ -989,14 +1063,14 @@
                 
                 tbody.innerHTML = '';
                 
-                if (data.keys.length === 0) {
+                if (!data.items || data.items.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">没有找到密钥</td></tr>';
                     return;
                 }
                 
                 const filteredKeys = keyFilter ? 
-                    data.keys.filter(key => key.key.toLowerCase().includes(keyFilter)) : 
-                    data.keys;
+                    data.items.filter(key => key.key.toLowerCase().includes(keyFilter)) : 
+                    data.items;
                 
                 if (filteredKeys.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">没有找到匹配的密钥</td></tr>';
@@ -1013,36 +1087,40 @@
                     }
                 });
                 
-                filteredKeys.forEach(key => {
-                    const tr = document.createElement('tr');
-                    tr.setAttribute('data-key', key.key);
-                    
-                    const maskedKey = formatKeyDisplay(key.key);
-                    const formattedDate = formatDate(key.add_time);
-                    
-                    tr.innerHTML = `
-                        <td>
-                            <div class="key-display">
-                                <span class="masked-key" title="点击显示完整密钥" onclick="toggleKeyVisibility(this, '${key.key}')">${maskedKey}</span>
-                                <button class="copy-btn" onclick="copyToClipboard('${key.key}', event)" title="复制密钥">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                                    </svg>
-                                </button>
-                            </div>
-                        </td>
-                        <td>¥${parseFloat(key.balance).toFixed(2)}</td>
-                        <td>${key.usage_count}</td>
-                        <td class="hide-on-mobile">${formattedDate}</td>
-                        <td>
-                            <div class="key-actions">
-                                <button class="action-btn refresh-btn" onclick="refreshKey('${key.key}')">刷新</button>
-                            </div>
-                        </td>
-                    `;
-                    
-                    tbody.appendChild(tr);
+                // 添加行动画延迟
+                filteredKeys.forEach((key, index) => {
+                    setTimeout(() => {
+                        const tr = document.createElement('tr');
+                        tr.setAttribute('data-key', key.key);
+                        tr.classList.add('new-row');
+                        
+                        const maskedKey = formatKeyDisplay(key.key);
+                        const formattedDate = formatDate(key.add_time);
+                        
+                        tr.innerHTML = `
+                            <td>
+                                <div class="key-display">
+                                    <span class="masked-key" title="点击显示完整密钥" onclick="toggleKeyVisibility(this, '${key.key}')">${maskedKey}</span>
+                                    <button class="copy-btn" onclick="copyToClipboard('${key.key}', event)" title="复制密钥">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </td>
+                            <td>¥${parseFloat(key.balance).toFixed(2)}</td>
+                            <td>${key.usage_count}</td>
+                            <td class="hide-on-mobile">${formattedDate}</td>
+                            <td>
+                                <div class="key-actions">
+                                    <button class="action-btn refresh-btn" onclick="refreshKey('${key.key}')">刷新</button>
+                                </div>
+                            </td>
+                        `;
+                        
+                        tbody.appendChild(tr);
+                    }, index * 50); // 每行延迟50毫秒显示，创建瀑布效果
                 });
                 
             } catch (error) {
@@ -1058,40 +1136,114 @@
                 messageEl.className = "success";
                 messageEl.style.display = 'block';
                 
+                // 找到对应行的刷新按钮并添加加载状态
+                const keyRow = document.querySelector(`tr[data-key="${key}"]`);
+                if (keyRow) {
+                    const refreshBtn = keyRow.querySelector('.refresh-btn');
+                    if (refreshBtn) {
+                        const originalText = refreshBtn.textContent;
+                        refreshBtn.innerHTML = `
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin">
+                                <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"></path>
+                            </svg>
+                            刷新中
+                        `;
+                        refreshBtn.disabled = true;
+                    }
+                }
+                
                 const response = await fetch('/api/refresh_key', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
                     },
                     body: JSON.stringify({ key: key })
                 });
                 
                 if (!response.ok) {
-                    throw new Error(`刷新失败: ${response.status}`);
+                    let errorMsg = `刷新失败: ${response.status}`;
+                    try {
+                        const errorData = await response.json();
+                        errorMsg = errorData.detail || errorMsg;
+                    } catch (e) {
+                        // 如果无法解析为JSON，尝试获取文本
+                        try {
+                            const errorText = await response.text();
+                            errorMsg = errorText.substring(0, 100);
+                            if (errorText.length > 100) errorMsg += '...';
+                        } catch (textError) {
+                            // 如果连文本都无法获取，使用通用错误消息
+                        }
+                    }
+                    throw new Error(errorMsg);
                 }
                 
                 const data = await response.json();
-                messageEl.textContent = data.message;
+                
+                // 检查是否包含警告信息
+                if (data.warning) {
+                    // 显示成功但带有警告的消息
+                    messageEl.innerHTML = `
+                        <div>刷新成功，但存在警告：</div>
+                        <div class="warning-message">${data.warning}</div>
+                        <div class="small-text">密钥仍然可用，但某些API功能可能受限</div>
+                    `;
+                    messageEl.className = "warning";
+                } else {
+                    // 显示纯成功消息
+                    messageEl.textContent = data.message || "密钥刷新成功";
+                    messageEl.className = "success";
+                }
                 
                 // 只更新这一行，而不是整个表格
-                const keyRow = document.querySelector(`tr[data-key="${key}"]`);
-                if (keyRow) {
-                    // 获取最新的密钥信息
-                    const keyResponse = await fetch(`/api/key_info?key=${key}`);
-                    if (keyResponse.ok) {
-                        const keyData = await keyResponse.json();
-                        // 更新余额
-                        const balanceCell = keyRow.querySelector('td:nth-child(2)');
-                        if (balanceCell) {
-                            balanceCell.textContent = `¥${parseFloat(keyData.balance).toFixed(2)}`;
-                        }
-                    }
-                }
+                loadKeyInfo(key, keyRow);
                 
                 // 更新统计信息
                 fetchStats();
             } catch (error) {
                 showMessage(`刷新密钥失败: ${error.message}`, "error");
+                
+                // 恢复刷新按钮
+                const keyRow = document.querySelector(`tr[data-key="${key}"]`);
+                if (keyRow) {
+                    const refreshBtn = keyRow.querySelector('.refresh-btn');
+                    if (refreshBtn) {
+                        refreshBtn.innerHTML = `刷新`;
+                        refreshBtn.disabled = false;
+                    }
+                }
+            }
+        }
+        
+        // 增加单独获取密钥信息并更新行的方法
+        async function loadKeyInfo(key, keyRow) {
+            try {
+                const response = await fetch(`/api/key_info?key=${encodeURIComponent(key)}`);
+                if (!response.ok) {
+                    console.error(`获取密钥信息失败: ${response.status}`);
+                    return;
+                }
+                
+                const keyInfo = await response.json();
+                
+                // 更新行中的余额和使用次数
+                if (keyRow) {
+                    const balanceCell = keyRow.querySelector('td:nth-child(2)');
+                    const usageCell = keyRow.querySelector('td:nth-child(3)');
+                    const timeCell = keyRow.querySelector('td:nth-child(4)');
+                    
+                    if (balanceCell) balanceCell.textContent = `¥${keyInfo.balance.toFixed(2)}`;
+                    if (usageCell) usageCell.textContent = keyInfo.usage_count;
+                    
+                    // 更新添加时间，格式化为本地时间
+                    if (timeCell && keyInfo.add_time) {
+                        const date = new Date(keyInfo.add_time * 1000);
+                        timeCell.textContent = date.toLocaleString('zh-CN');
+                    }
+                }
+            } catch (error) {
+                console.error(`更新密钥信息时出错:`, error);
             }
         }
 
@@ -1103,14 +1255,76 @@
                 messageEl.className = "success";
                 messageEl.style.display = 'block';
                 
-                const response = await fetch('/refresh', { method: 'POST' });
-                const data = await response.json();
-                messageEl.textContent = data.message;
+                // 为所有刷新按钮添加加载状态
+                document.querySelectorAll('.refresh-btn').forEach(btn => {
+                    btn.innerHTML = `
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin">
+                            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"></path>
+                        </svg>
+                        刷新中
+                    `;
+                    btn.disabled = true;
+                });
                 
-                loadKeys();
-                fetchStats();
+                const response = await fetch('/refresh', { 
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                // 检查HTTP状态
+                if (!response.ok) {
+                    let errorMsg = `服务器错误 (${response.status})`;
+                    try {
+                        // 尝试解析错误响应
+                        const errorData = await response.json();
+                        if (errorData && errorData.message) {
+                            errorMsg = errorData.message;
+                        } else if (errorData && errorData.detail) {
+                            errorMsg = errorData.detail;
+                        }
+                    } catch (parseError) {
+                        // 如果无法解析JSON，尝试获取文本
+                        try {
+                            const errorText = await response.text();
+                            // 只取文本的前100个字符避免过长
+                            errorMsg = errorText.substring(0, 100);
+                            if (errorText.length > 100) errorMsg += '...';
+                        } catch (textError) {
+                            // 如果连文本都无法获取，使用通用错误消息
+                            errorMsg = `请求失败 (HTTP ${response.status})`;
+                        }
+                    }
+                    throw new Error(errorMsg);
+                }
+                
+                // 解析成功的响应
+                try {
+                    const data = await response.json();
+                    const successMsg = data.message || '刷新完成';
+                    
+                    // 显示结果消息，包括成功和跳过的数量
+                    messageEl.innerHTML = `${successMsg}<br><small>刷新完成时间: ${new Date().toLocaleTimeString()}</small>`;
+                    messageEl.className = "success";
+                    
+                    // 使用交错动画加载新数据
+                    setTimeout(() => {
+                        loadKeys();
+                        fetchStats();
+                    }, 500);
+                } catch (jsonError) {
+                    throw new Error('无法解析服务器响应: ' + jsonError.message);
+                }
             } catch (error) {
-                showMessage('刷新失败：' + error.message, 'error');
+                const errorMsg = error.message || '刷新过程中发生未知错误';
+                showMessage(`刷新失败: ${errorMsg}`, 'error');
+                
+                // 恢复所有刷新按钮
+                document.querySelectorAll('.refresh-btn').forEach(btn => {
+                    btn.innerHTML = `刷新`;
+                    btn.disabled = false;
+                });
             }
         }
 
@@ -1143,8 +1357,78 @@
             document.getElementById('sortField').value = currentSortField;
             document.getElementById('sortOrder').value = currentSortOrder;
             
-            currentPage = 1;
-            loadKeys();
+            // 不要重新加载整个表格，只更新排序标记并重新排序现有数据
+            updateSortIndicators(field);
+            
+            // 如果没有过滤条件，才需要重新加载
+            if (keyFilter) {
+                currentPage = 1;
+                loadKeys();
+            } else {
+                sortExistingRows(field, currentSortOrder);
+            }
+        }
+
+        // 更新排序指示器
+        function updateSortIndicators(field) {
+            document.querySelectorAll('th').forEach(th => {
+                th.classList.remove('active');
+                const headerField = th.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
+                if (headerField) {
+                    th.textContent = th.textContent.replace(/ [↑↓]$/, '');
+                    if (headerField === field) {
+                        th.classList.add('active');
+                        th.textContent += currentSortOrder === 'asc' ? ' ↑' : ' ↓';
+                    }
+                }
+            });
+        }
+
+        // 排序现有行，避免重新加载
+        function sortExistingRows(field, order) {
+            const tbody = document.querySelector("#keysTable tbody");
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            
+            // 没有数据时不需要排序
+            if (rows.length === 0 || rows[0].querySelector('td[colspan]')) {
+                return;
+            }
+            
+            rows.sort((a, b) => {
+                let aValue, bValue;
+                
+                // 根据不同的字段获取值
+                if (field === 'key') {
+                    aValue = a.getAttribute('data-key');
+                    bValue = b.getAttribute('data-key');
+                } else if (field === 'balance') {
+                    aValue = parseFloat(a.querySelector('td:nth-child(2)').textContent.replace('¥', ''));
+                    bValue = parseFloat(b.querySelector('td:nth-child(2)').textContent.replace('¥', ''));
+                } else if (field === 'usage_count') {
+                    aValue = parseInt(a.querySelector('td:nth-child(3)').textContent);
+                    bValue = parseInt(b.querySelector('td:nth-child(3)').textContent);
+                } else if (field === 'add_time') {
+                    // 这里我们可能需要先获取timestamp
+                    const aTime = a.querySelector('td:nth-child(4)').textContent;
+                    const bTime = b.querySelector('td:nth-child(4)').textContent;
+                    // 简单比较，因为我们的日期格式可以直接比较
+                    aValue = aTime;
+                    bValue = bTime;
+                }
+                
+                // 比较
+                if (aValue === bValue) return 0;
+                
+                // 升序或降序
+                if (order === 'asc') {
+                    return aValue < bValue ? -1 : 1;
+                } else {
+                    return aValue > bValue ? -1 : 1;
+                }
+            });
+            
+            // 重新添加排序后的行
+            rows.forEach(row => tbody.appendChild(row));
         }
 
         // 更改页码
@@ -1158,18 +1442,42 @@
 
         // 切换密钥可见性
         function toggleKeyVisibility(element, fullKey) {
-            const parent = element.parentElement;
+            const parentCell = element.closest('td');
+            const keyDisplay = element.closest('.key-display');
+            
             if (element.classList.contains('masked-key')) {
-                element.innerHTML = fullKey;
+                // 先设置一个固定宽度，避免布局跳动
+                const currentWidth = element.offsetWidth;
+                if (currentWidth > 0) {
+                    element.style.minWidth = currentWidth + 'px';
+                }
+                
+                // 更改类，然后设置内容
                 element.classList.remove('masked-key');
                 element.classList.add('full-key');
                 element.title = "点击隐藏密钥";
+                
+                // 短暂延迟更改内容，让过渡有时间开始
+                setTimeout(() => {
+                    element.innerHTML = fullKey;
+                }, 10);
             } else {
+                // 显示为遮罩状态
                 const maskedKey = formatKeyDisplay(fullKey);
-                element.innerHTML = maskedKey;
+                
+                // 更改类，然后设置内容
                 element.classList.remove('full-key');
                 element.classList.add('masked-key');
                 element.title = "点击显示完整密钥";
+                
+                // 保持当前宽度直到过渡完成
+                setTimeout(() => {
+                    element.innerHTML = maskedKey;
+                    // 过渡完成后移除固定宽度
+                    setTimeout(() => {
+                        element.style.minWidth = '';
+                    }, 300);
+                }, 10);
             }
         }
 

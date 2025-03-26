@@ -270,8 +270,15 @@
                     // 登录成功，重定向到管理页面
                     window.location.href = '/admin';
                 } else {
-                    const data = await response.json();
-                    errorMessage.textContent = data.detail || '登录失败，请检查用户名和密码';
+                    // 尝试解析错误响应
+                    try {
+                        const data = await response.json();
+                        errorMessage.textContent = data.detail || '登录失败，请检查用户名和密码';
+                    } catch (jsonError) {
+                        // 如果JSON解析失败，显示通用错误
+                        errorMessage.textContent = '登录失败，请检查用户名和密码';
+                    }
+                    
                     errorMessage.style.display = 'block';
                     
                     // 恢复按钮状态
@@ -279,6 +286,7 @@
                     loginButton.textContent = '登录';
                 }
             } catch (error) {
+                console.error('登录请求失败:', error);
                 errorMessage.textContent = '登录请求失败，请稍后再试';
                 errorMessage.style.display = 'block';
                 
