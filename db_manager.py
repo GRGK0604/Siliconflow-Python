@@ -37,6 +37,7 @@ class ApiKey(Base):
     balance = Column(Float, default=0)
     usage_count = Column(Integer, default=0)
     enabled = Column(Boolean, default=True)
+    last_used = Column(Float, default=None, nullable=True)  # 最后使用时间
     
     # 与日志的关系
     logs = relationship("Log", back_populates="api_key")

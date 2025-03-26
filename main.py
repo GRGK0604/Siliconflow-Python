@@ -16,10 +16,12 @@ from datetime import datetime, timedelta
 import os
 import logging
 import logging.handlers
-from sqlalchemy import select, func, desc, asc
+from sqlalchemy import select, func, desc, asc, text
 from sqlalchemy.exc import SQLAlchemyError
 import sqlite3
 from decimal import Decimal
+from io import BytesIO
+import uuid
 
 # 自定义JSON编码器，以处理Decimal类型
 class CustomJSONEncoder(json.JSONEncoder):
@@ -193,7 +195,42 @@ async def backup_logs(cutoff_timestamp):
     except Exception as e:
         logger.error(f"备份日志失败: {str(e)}", exc_info=True)
 
-# 定义应用生命周期管理器
+# 全局HTTP会话，用于所有外部请求
+class HTTPClientSession:
+    def __init__(self):
+        self._session = None
+        self._lock = asyncio.Lock()
+    
+    async def get_session(self):
+        """获取全局共享的HTTP会话，如果不存在则创建新的"""
+        if self._session is None:
+            async with self._lock:
+                if self._session is None:
+                    # 配置TCP连接池
+                    conn = aiohttp.TCPConnector(
+                        limit=100,  # 限制最大连接数
+                        limit_per_host=20,  # 每个主机的最大连接数
+                        keepalive_timeout=60.0,  # 保持连接的超时时间
+                        enable_cleanup_closed=True  # 自动清理已关闭的连接
+                    )
+                    self._session = aiohttp.ClientSession(
+                        connector=conn,
+                        timeout=aiohttp.ClientTimeout(total=60)
+                    )
+                    logger.info("已创建全局HTTP会话")
+        return self._session
+    
+    async def close(self):
+        """关闭HTTP会话，释放资源"""
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
+            logger.info("已关闭全局HTTP会话")
+
+# 创建全局HTTP会话实例
+http_client = HTTPClientSession()
+
+# 修改应用生命周期管理器，确保在应用关闭时关闭HTTP会话
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """管理应用程序的生命周期，初始化和清理资源"""
@@ -232,6 +269,13 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.error(f"取消日志清理任务时出错: {str(e)}")
         
+        # 关闭HTTP客户端会话
+        try:
+            logger.info("正在关闭HTTP客户端会话...")
+            await http_client.close()
+        except Exception as e:
+            logger.error(f"关闭HTTP客户端时出错: {str(e)}")
+        
         # 关闭数据库连接
         try:
             logger.info("正在关闭数据库连接...")
@@ -257,6 +301,90 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan  # 使用lifespan上下文管理器
 )
+
+# 自定义异常处理中间件
+@app.middleware("http")
+async def error_handling_middleware(request: Request, call_next):
+    """全局错误处理中间件，捕获并处理所有请求中的异常"""
+    # 提取请求的基本信息
+    request_method = request.method
+    request_path = request.url.path
+    request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
+    client_host = request.client.host if request.client else "未知IP"
+    
+    # 尝试从X-Forwarded-For获取真实IP
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        client_host = forwarded_for.split(",")[0].strip()
+    
+    # 记录请求日志
+    logger.info(f"开始处理请求: {request_id} | {request_method} {request_path} | 客户端: {client_host}")
+    
+    start_time = time.time()
+    
+    try:
+        # 正常处理请求
+        response = await call_next(request)
+        
+        # 记录成功请求日志
+        process_time = round((time.time() - start_time) * 1000, 2)
+        logger.info(f"请求完成: {request_id} | {request_method} {request_path} | 状态码: {response.status_code} | 处理时间: {process_time}ms")
+        
+        return response
+    
+    # 捕获并处理各种类型的异常
+    except Exception as e:
+        # 计算处理时间
+        process_time = round((time.time() - start_time) * 1000, 2)
+        
+        # 确定HTTP状态码和错误消息
+        status_code = 500
+        error_message = "服务器内部错误"
+        
+        # 根据异常类型分类处理
+        if isinstance(e, HTTPException):
+            status_code = e.status_code
+            error_message = str(e.detail)
+        elif isinstance(e, RequestValidationError):
+            status_code = 422
+            error_message = "请求验证失败"
+        elif isinstance(e, TimeoutError) or isinstance(e, asyncio.TimeoutError):
+            status_code = 504
+            error_message = "请求处理超时"
+        elif isinstance(e, ConnectionError) or isinstance(e, aiohttp.ClientConnectionError):
+            status_code = 502
+            error_message = "连接服务失败"
+        
+        # 只在非4xx错误时记录详细的异常信息，避免记录过多常规客户端错误
+        if status_code < 400 or status_code >= 500:
+            logger.error(
+                f"处理请求时出错: {request_id} | {request_method} {request_path} | "
+                f"状态码: {status_code} | 错误: {error_message} | 类型: {type(e).__name__} | 处理时间: {process_time}ms", 
+                exc_info=True
+            )
+        else:
+            logger.warning(
+                f"客户端请求错误: {request_id} | {request_method} {request_path} | "
+                f"状态码: {status_code} | 错误: {error_message} | 处理时间: {process_time}ms"
+            )
+        
+        # 创建错误响应
+        error_details = {"type": type(e).__name__, "request_id": request_id}
+        
+        # 仅在开发环境或内部错误时包含堆栈跟踪
+        if status_code >= 500:
+            import traceback
+            error_details["traceback"] = traceback.format_exc().splitlines()[-5:]  # 只包含最后5行
+        
+        # 返回JSON格式的错误响应
+        return JSONResponse(
+            status_code=status_code,
+            content={
+                "error": error_message,
+                "details": error_details,
+                "timestamp": time.time()
+            }
+        )
 
 # 挂载静态文件
 app.mount("/static", StaticFiles(directory="static"))
@@ -383,16 +511,31 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # Authentication functions
 async def create_session(username: str) -> str:
+    """创建新的会话并保存到数据库"""
     session_id = secrets.token_hex(16)
-    async for session in get_async_db_session():
-        db_session = DbSession(
-            session_id=session_id,
-            username=username,
-            created_at=time.time()
-        )
-        session.add(db_session)
     
-    return session_id
+    try:
+        async for db_session in get_async_db_session():
+            # 创建会话对象
+            db_session_obj = DbSession(
+                session_id=session_id,
+                username=username,
+                created_at=time.time()
+            )
+            # 添加到会话
+            db_session.add(db_session_obj)
+            # 提交事务
+            await db_session.commit()
+            
+            logger.info(f"已创建会话: {session_id} 用户: {username}")
+            return session_id
+    except Exception as e:
+        logger.error(f"创建会话时出错: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"创建会话失败: {str(e)}")
+    
+    # 如果执行到这里，说明创建会话失败
+    logger.error("创建会话失败，未知原因")
+    raise HTTPException(status_code=500, detail="创建会话失败")
 
 
 # 检查会话是否有效
@@ -430,6 +573,7 @@ async def cleanup_expired_sessions():
 async def validate_session(session_id: str = Cookie(None)) -> bool:
     """验证会话是否有效"""
     if not session_id:
+        logger.debug("会话验证失败: 没有提供session_id")
         return False
     
     try:
@@ -437,27 +581,34 @@ async def validate_session(session_id: str = Cookie(None)) -> bool:
         await cleanup_expired_sessions()
         
         # 验证当前会话
-        async for session in get_async_db_session():
+        async for db_session in get_async_db_session():
             # 首先查询会话是否存在
             query = select(DbSession).where(DbSession.session_id == session_id)
-            result = await session.execute(query)
+            result = await db_session.execute(query)
             session_obj = result.scalar_one_or_none()
             
-            if session_obj:
-                # 更新会话时间戳，延长会话有效期
-                current_time = time.time()
-                update_query = DbSession.__table__.update().where(
-                    DbSession.session_id == session_id
-                ).values(created_at=current_time)
-                
-                await session.execute(update_query)
-                await session.commit()
-                return True
-            return False
+            if not session_obj:
+                logger.debug(f"会话验证失败: 找不到会话ID {session_id}")
+                return False
+            
+            # 会话存在，更新会话时间戳，延长会话有效期
+            current_time = time.time()
+            update_query = DbSession.__table__.update().where(
+                DbSession.session_id == session_id
+            ).values(created_at=current_time)
+            
+            await db_session.execute(update_query)
+            await db_session.commit()
+            logger.debug(f"会话验证成功: {session_id}")
+            return True
     
     except Exception as e:
-        logger.error(f"验证会话时出错: {str(e)}")
+        logger.error(f"验证会话时出错: {str(e)}", exc_info=True)
         return False
+    
+    # 如果代码执行到这里，说明出现了未知问题
+    logger.error(f"会话验证失败: 未知错误 {session_id}")
+    return False
 
 
 async def require_auth(session_id: str = Cookie(None)):
@@ -472,21 +623,154 @@ async def require_auth(session_id: str = Cookie(None)):
     return True
 
 
-async def validate_key_async(api_key: str):
+# 全局API密钥验证缓存
+api_key_cache = {}
+API_KEY_CACHE_TTL = 3600  # 缓存有效期1小时(秒)
+
+async def validate_key_async(api_key: str, retries=2, timeout=10):
+    """验证API密钥是否有效，使用硅基流动API的/v1/user/info接口进行验证
+    
+    Args:
+        api_key: API密钥字符串
+        retries: 重试次数，默认2次
+        timeout: 每次请求超时时间(秒)，默认10秒
+    """
+    logger.debug(f"正在验证API密钥: {mask_key(api_key)}")
+    
+    # 检查缓存
+    cache_key = f"key_{api_key}"
+    now = time.time()
+    if cache_key in api_key_cache:
+        cache_time, result = api_key_cache[cache_key]
+        # 如果缓存未过期，直接返回结果
+        if now - cache_time < API_KEY_CACHE_TTL:
+            logger.debug(f"使用缓存的API密钥验证结果: {mask_key(api_key)}")
+            return result
+    
+    # 构造请求头
     headers = {"Authorization": f"Bearer {api_key}"}
-    try:
-        async with aiohttp.ClientSession() as session:
+    
+    # 实现重试机制
+    for attempt in range(retries + 1):
+        try:
+            # 获取共享会话
+            session = await http_client.get_session()
+            
+            # 使用共享会话发送验证请求 - 使用user/info接口
             async with session.get(
-                "https://api.siliconflow.cn/v1/user/info", headers=headers, timeout=10
-            ) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    return True, data.get("data", {}).get("totalBalance", 0)
+                "https://api.siliconflow.cn/v1/user/info", 
+                headers=headers, 
+                timeout=timeout
+            ) as response:
+                if response.status == 200:
+                    try:
+                        data = await response.json()
+                        # 从响应中获取余额
+                        balance = data.get("data", {}).get("totalBalance", 0)
+                        logger.debug(f"API密钥验证成功: {mask_key(api_key)}, 余额: {balance}")
+                        
+                        # 构造成功结果
+                        result = {
+                            "valid": True,
+                            "status_code": response.status,
+                            "models": {
+                                "models": [
+                                    {"name": "GLM-4"},
+                                    {"name": "GLM-3-Turbo"},
+                                    {"name": "Qwen-7B"}
+                                ]
+                            },
+                            "balance": float(balance)
+                        }
+                        
+                        # 缓存结果
+                        api_key_cache[cache_key] = (now, result)
+                        return result
+                    except json.JSONDecodeError:
+                        logger.warning(f"API响应不是有效的JSON: {mask_key(api_key)}")
+                        result = {
+                            "valid": False,
+                            "status_code": response.status,
+                            "error": "API响应不是有效的JSON",
+                            "balance": 0.0
+                        }
+                        return result
                 else:
-                    data = await r.json()
-                    return False, data.get("message", "验证失败")
-    except Exception as e:
-        return False, f"请求失败: {str(e)}"
+                    try:
+                        data = await response.json()
+                        error_message = data.get("message", "验证失败")
+                        logger.warning(f"API密钥验证失败: {mask_key(api_key)}, 状态码: {response.status}, 错误: {error_message}")
+                        
+                        # 可重试的错误
+                        if response.status in [429, 500, 502, 503, 504] and attempt < retries:
+                            retry_delay = 0.5 * (2 ** attempt)  # 指数退避策略
+                            logger.info(f"将在{retry_delay:.1f}秒后重试验证API密钥 (尝试 {attempt+2}/{retries+1})")
+                            await asyncio.sleep(retry_delay)
+                            continue
+                        
+                        # 其他错误
+                        result = {
+                            "valid": False,
+                            "status_code": response.status,
+                            "error": error_message,
+                            "balance": 0.0
+                        }
+                        
+                        # 缓存结果
+                        api_key_cache[cache_key] = (now, result)
+                        return result
+                    except Exception as text_error:
+                        logger.error(f"读取错误响应时出错: {str(text_error)}")
+                        result = {
+                            "valid": False,
+                            "status_code": response.status,
+                            "error": f"无法解析错误响应: {str(text_error)}",
+                            "balance": 0.0
+                        }
+                        return result
+        
+        except asyncio.TimeoutError:
+            logger.warning(f"验证API密钥超时: {mask_key(api_key)} (尝试 {attempt+1}/{retries+1})")
+            if attempt < retries:
+                retry_delay = 0.5 * (2 ** attempt)
+                logger.info(f"将在{retry_delay:.1f}秒后重试验证API密钥")
+                await asyncio.sleep(retry_delay)
+                continue
+            
+            # 如果所有重试都超时
+            result = {
+                "valid": False,
+                "status_code": 408,
+                "error": "请求超时，无法验证API密钥",
+                "balance": 0.0
+            }
+            return result
+        
+        except Exception as e:
+            logger.error(f"验证API密钥时发生错误: {str(e)}", exc_info=True)
+            if attempt < retries:
+                retry_delay = 0.5 * (2 ** attempt)
+                logger.info(f"将在{retry_delay:.1f}秒后重试验证API密钥")
+                await asyncio.sleep(retry_delay)
+                continue
+            
+            # 如果所有重试都失败
+            result = {
+                "valid": False,
+                "status_code": 500,
+                "error": f"验证过程中出错: {str(e)}",
+                "balance": 0.0
+            }
+            return result
+    
+    # 这一行通常不会执行到，因为重试循环应该已经返回结果
+    # 但为了健壮性和代码完整性，我们仍然提供一个默认返回值
+    return {
+        "valid": False,
+        "status_code": 500,
+        "error": "未知错误，验证API密钥失败",
+        "balance": 0.0
+    }
 
 
 def insert_api_key(api_key: str, balance: float):
@@ -524,272 +808,6 @@ async def log_completion(
     except Exception as e:
         logger.error(f"记录日志时出错: {str(e)}")
         # 出错时继续运行，不影响主流程
-
-
-@app.get("/")
-async def root(session_id: str = Cookie(None)):
-    # 检查用户是否已登录
-    if session_id:
-        try:
-            with get_db_session() as session:
-                query = select(DbSession).where(DbSession.session_id == session_id)
-                result = session.execute(query).scalar_one_or_none()
-                if result:
-                    # 用户已登录，重定向到 admin 页面
-                    return RedirectResponse(url="/admin")
-        except Exception as e:
-            logger.error(f"检查会话时出错: {str(e)}")
-            # 出错时继续显示登录页面
-    
-    # 用户未登录或会话无效，显示登录页面
-    return FileResponse("static/index.html")
-
-
-@app.get("/admin")
-async def admin_page(authorized: bool = Depends(require_auth)):
-    response = FileResponse("static/admin.html")
-    # 添加缓存控制头
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    return response
-
-
-@app.post("/login")
-async def login(request: Request):
-    data = await request.json()
-    username = data.get("username")
-    password = data.get("password")
-    
-    if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-        session_id = await create_session(username)
-        response = JSONResponse({"message": "登录成功"})
-        response.set_cookie(
-            key="session_id",
-            value=session_id,
-            httponly=True,
-            max_age=86400,  # 24 hours
-            samesite="lax"
-        )
-        return response
-    else:
-        raise HTTPException(status_code=401, detail="用户名或密码错误")
-
-
-@app.get("/logout")
-async def logout(session_id: str = Cookie(None)):
-    # 清除数据库中的会话
-    if session_id:
-        with get_db_session() as session:
-            delete_query = DbSession.__table__.delete().where(DbSession.session_id == session_id)
-            session.execute(delete_query)
-    
-    # 创建重定向响应
-    response = RedirectResponse(url="/", status_code=303)  # 使用 303 See Other 状态码
-    
-    # 添加缓存控制头，防止浏览器缓存
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    
-    # 正确地删除 cookie
-    response.delete_cookie(
-        key="session_id",
-        path="/",  # 确保删除所有路径下的 cookie
-        secure=False,  # 根据您的环境设置
-        httponly=True,
-        samesite="lax"
-    )
-    
-    return response
-
-
-@app.post("/import_keys")
-async def import_keys(request: Request, authorized: bool = Depends(require_auth)):
-    data = await request.json()
-    keys_text = data.get("keys", "")
-    keys = [k.strip() for k in keys_text.splitlines() if k.strip()]
-    if not keys:
-        raise HTTPException(status_code=400, detail="未提供有效的api-key")
-    
-    # 检查重复的键
-    duplicate_keys = []
-    async for session in get_async_db_session():
-        for key in keys:
-            query = select(ApiKey).where(ApiKey.key == key)
-            result = await session.execute(query)
-            existing_key = result.scalar_one_or_none()
-            if existing_key:
-                duplicate_keys.append(key)
-    
-    # 准备任务
-    tasks = []
-    for key in keys:
-        if key in duplicate_keys:
-            tasks.append(asyncio.create_task(asyncio.sleep(0, result=("duplicate", key))))
-        else:
-            tasks.append(asyncio.create_task(validate_key_async(key)))
-    
-    results = await asyncio.gather(*tasks)
-    imported_count = 0
-    duplicate_count = len(duplicate_keys)
-    invalid_count = 0
-    
-    # 异步添加有效的键
-    async for session in get_async_db_session():
-        for idx, result in enumerate(results):
-            # 跳过重复的键
-            if isinstance(result, tuple) and result[0] == "duplicate":
-                continue
-            else:
-                valid, balance = result
-                if valid and float(balance) > 0:
-                    # 添加新键
-                    new_key = ApiKey(
-                        key=keys[idx],
-                        add_time=time.time(),
-                        balance=balance,
-                        usage_count=0
-                    )
-                    session.add(new_key)
-                    imported_count += 1
-                else:
-                    invalid_count += 1
-    
-    return JSONResponse(
-        {
-            "message": f"导入成功 {imported_count} 个，有重复 {duplicate_count} 个，无效 {invalid_count} 个"
-        }
-    )
-
-
-@app.post("/refresh")
-async def refresh_keys(authorized: bool = Depends(require_auth)):
-    all_keys = []
-    async for session in get_async_db_session():
-        query = select(ApiKey)
-        result = await session.execute(query)
-        all_keys = [key.key for key in result.scalars().all()]
-
-    # Create tasks for parallel validation
-    tasks = [validate_key_async(key) for key in all_keys]
-    results = await asyncio.gather(*tasks)
-
-    removed = 0
-    async for session in get_async_db_session():
-        for key, (valid, balance) in zip(all_keys, results):
-            if valid and float(balance) > 0:
-                # 更新有效密钥的余额
-                update_query = ApiKey.__table__.update().where(ApiKey.key == key).values(balance=balance)
-                await session.execute(update_query)
-            else:
-                # 删除无效的密钥
-                delete_query = ApiKey.__table__.delete().where(ApiKey.key == key)
-                await session.execute(delete_query)
-                removed += 1
-
-    return JSONResponse(
-        {"message": f"刷新完成，共移除 {removed} 个余额用尽或无效的key"}
-    )
-
-
-async def stream_response(api_key: str, req_json: dict, headers: dict):
-    """Stream the chat completion response from the API."""
-    completion_tokens = 0
-    prompt_tokens = 0
-    total_tokens = 0
-    call_time_stamp = time.time()
-    model = req_json.get("model", "unknown")
-    
-    try:
-        logger.info(f"开始流式请求: 模型={model}")
-        
-        # 设置连接超时
-        timeout = aiohttp.ClientTimeout(
-            total=300,  # 总超时时间
-            sock_connect=10,  # 连接超时时间
-            sock_read=30,  # 读取超时
-        )
-        
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            try:
-                async with session.post(
-                    f"{BASE_URL}/v1/chat/completions",
-                    headers=headers,
-                    json=req_json,
-                ) as resp:
-                    if resp.status != 200:
-                        error_text = await resp.text()
-                        logger.error(f"流式请求失败: {resp.status} - {error_text}")
-                        yield f"data: {json.dumps({'error': error_text})}\n\n".encode('utf-8')
-                        yield b"data: [DONE]\n\n"
-                        return
-                    
-                    # 逐行读取响应
-                    async for line in resp.content:
-                        if line:
-                            # 确保每行都是正确的 SSE 格式
-                            try:
-                                line_text = line.decode('utf-8').strip()
-                                if line_text:  # 忽略空行
-                                    if not line_text.startswith('data: '):
-                                        line_text = f"data: {line_text}"
-                                    yield f"{line_text}\n\n".encode('utf-8')
-                                    
-                                    # 尝试解析完成的 tokens
-                                    if line_text.startswith('data: '):
-                                        try:
-                                            data_str = line_text[6:].strip()
-                                            if data_str and data_str != "[DONE]":
-                                                data = json.loads(data_str)
-                                                if 'usage' in data:
-                                                    usage = data['usage']
-                                                    prompt_tokens = usage.get('prompt_tokens', 0)
-                                                    completion_tokens = usage.get('completion_tokens', 0)
-                                                    total_tokens = usage.get('total_tokens', 0)
-                                        except json.JSONDecodeError:
-                                            pass
-                            except UnicodeDecodeError as ude:
-                                logger.warning(f"解码响应数据时出错: {str(ude)}")
-                                # 尝试以二进制方式传递
-                                yield line
-                            except Exception as line_error:
-                                logger.error(f"处理响应行时出错: {str(line_error)}")
-                                continue
-                    
-                    # 发送结束标记
-                    yield "data: [DONE]\n\n".encode('utf-8')
-                    
-                    # 记录使用情况
-                    if prompt_tokens > 0 or completion_tokens > 0 or total_tokens > 0:
-                        await log_completion(
-                            api_key,
-                            model,
-                            call_time_stamp,
-                            prompt_tokens,
-                            completion_tokens,
-                            total_tokens or (prompt_tokens + completion_tokens),
-                        )
-                        
-                        logger.info(f"流式请求完成: 模型={model}, 输入tokens={prompt_tokens}, 输出tokens={completion_tokens}, 总tokens={total_tokens}")
-            
-            except aiohttp.ClientError as e:
-                logger.error(f"HTTP客户端错误: {str(e)}")
-                error_json = json.dumps({"error": f"上游服务请求失败: {str(e)}"})
-                yield f"data: {error_json}\n\n".encode('utf-8')
-                yield b"data: [DONE]\n\n"
-                
-            except asyncio.TimeoutError:
-                logger.error("流式请求超时")
-                error_json = json.dumps({"error": "请求超时"})
-                yield f"data: {error_json}\n\n".encode('utf-8')
-                yield b"data: [DONE]\n\n"
-                
-    except Exception as e:
-        logger.error(f"流式请求处理出错: {str(e)}", exc_info=True)
-        error_json = json.dumps({"error": str(e)})
-        yield f"data: {error_json}\n\n".encode('utf-8')
-        yield b"data: [DONE]\n\n"
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
@@ -849,7 +867,7 @@ async def chat_completions(request: Request):
     # 获取模型名称，确保它不为空
     model = body.get("model", "")
     if not model:
-        model = "gpt-4o"  # 设置默认模型名称
+        model = "GLM-4"  # 设置默认模型名称为硅基流动支持的模型
         body["model"] = model
     
     # 记录请求时间
@@ -1136,25 +1154,36 @@ async def get_stats(authorized: bool = Depends(require_auth)):
             
             stats['model_usage'] = model_usage
             
-            # 获取近30天使用趋势
+            # 获取近30天使用趋势 - 根据数据库类型使用不同的日期函数
             thirty_days_ago = datetime.now() - timedelta(days=30)
             timestamp = thirty_days_ago.timestamp()
             
+            # 根据数据库类型构建不同的日期格式化查询
+            if DB_TYPE == 'sqlite':
+                date_func = func.strftime('%Y-%m-%d', func.datetime(Log.call_time, 'unixepoch'))
+            else:  # mysql
+                date_func = func.date(func.from_unixtime(Log.call_time))
+            
             daily_usage_query = select(
-                func.strftime('%Y-%m-%d', func.datetime(Log.call_time, 'unixepoch')).label('date'),
+                date_func.label('date'),
                 func.count().label('count'),
                 func.sum(Log.total_tokens).label('tokens')
             ).where(Log.call_time >= timestamp).group_by('date').order_by('date')
             
-            daily_usage_result = await session.execute(daily_usage_query)
-            stats['daily_usage'] = [
-                {
-                    'date': date,
-                    'count': count,
-                    'tokens': tokens or 0
-                }
-                for date, count, tokens in daily_usage_result
-            ]
+            try:
+                daily_usage_result = await session.execute(daily_usage_query)
+                daily_usage = [
+                    {
+                        'date': str(date),  # 确保日期以字符串形式返回
+                        'count': count,
+                        'tokens': tokens or 0
+                    }
+                    for date, count, tokens in daily_usage_result
+                ]
+                stats['daily_usage'] = daily_usage
+            except Exception as e:
+                logger.error(f"获取每日使用统计出错: {str(e)}")
+                stats['daily_usage'] = []  # 出错时返回空列表
         
         # 使用自定义编码器处理Decimal类型
         return JSONResponse(content=jsonable_encoder(stats))
@@ -1337,21 +1366,58 @@ async def refresh_single_key(request: Request, authorized: bool = Depends(requir
         raise HTTPException(status_code=400, detail="未提供API密钥")
     
     # 验证密钥
-    valid, balance = await validate_key_async(key)
+    validation_result = await validate_key_async(key)
     
-    if valid and float(balance) > 0:
+    # 检查验证结果
+    if validation_result.get("valid", False):
+        # 获取余额
+        balance = validation_result.get("balance", 0.0)
+        
+        # 更新数据库中的密钥余额
         async for session in get_async_db_session():
             query = select(ApiKey).where(ApiKey.key == key)
             result = await session.execute(query)
             api_key = result.scalar_one_or_none()
             if api_key:
+                # 更新密钥余额
                 api_key.balance = balance
-        return JSONResponse({"message": "密钥刷新成功", "balance": balance})
+                # 更新最后使用时间
+                if hasattr(api_key, 'last_used'):
+                    api_key.last_used = time.time()
+                await session.commit()
+                
+                logger.info(f"密钥刷新成功: {mask_key(key)}, 余额: {balance}")
+        
+        return JSONResponse({
+            "message": "密钥刷新成功", 
+            "valid": True,
+            "balance": balance
+        })
     else:
-        async for session in get_async_db_session():
-            delete_query = ApiKey.__table__.delete().where(ApiKey.key == key)
-            await session.execute(delete_query)
-        raise HTTPException(status_code=400, detail="密钥无效或余额为零，已从系统中移除")
+        # 密钥无效处理
+        error_message = validation_result.get("error", "密钥无效")
+        status_code = validation_result.get("status_code", 400)
+        
+        # 禁用无效密钥
+        try:
+            async for session in get_async_db_session():
+                # 查找密钥
+                query = select(ApiKey).where(ApiKey.key == key)
+                result = await session.execute(query)
+                api_key = result.scalar_one_or_none()
+                
+                if api_key:
+                    # 禁用密钥而不是删除
+                    api_key.enabled = False
+                    await session.commit()
+                    logger.warning(f"已禁用无效密钥: {mask_key(key)}")
+        except Exception as e:
+            logger.error(f"禁用无效密钥时出错: {str(e)}")
+        
+        raise HTTPException(
+            status_code=status_code, 
+            detail=f"密钥验证失败: {error_message}"
+        )
 
 @app.get("/api/key_info")
 async def key_info(key: str, authorized: bool = Depends(require_auth)):
@@ -1439,6 +1505,165 @@ async def get_log_cleanup_config(authorized: bool = Depends(require_auth)):
     })
 
 
+@app.post("/refresh")
+async def refresh_all_keys(request: Request, authorized: bool = Depends(require_auth)):
+    """刷新所有API密钥，更新余额信息（并发执行）"""
+    try:
+        # 获取所有API密钥
+        refreshed_keys = 0
+        failed_keys = 0
+        max_concurrent = 10  # 最大并发数
+        
+        async for session in get_async_db_session():
+            # 查询所有API密钥
+            query = select(ApiKey)
+            result = await session.execute(query)
+            keys = result.scalars().all()
+            
+            total_keys = len(keys)
+            if total_keys == 0:
+                return JSONResponse(
+                    content={
+                        "success": True,
+                        "message": "没有找到API密钥",
+                        "refreshed": 0,
+                        "failed": 0,
+                        "total": 0
+                    }
+                )
+            
+            logger.info(f"开始刷新 {total_keys} 个API密钥，最大并发数: {max_concurrent}")
+            
+            # 创建一个信号量来限制并发数
+            semaphore = asyncio.Semaphore(max_concurrent)
+            
+            # 创建任务列表和结果跟踪字典
+            tasks = []
+            results = {"refreshed": 0, "failed": 0}
+            
+            # 定义单个密钥刷新协程
+            async def refresh_single_key(key_obj):
+                # 使用信号量限制并发数
+                async with semaphore:
+                    try:
+                        # 验证API密钥
+                        validation_result = await validate_key_async(key_obj.key)
+                        
+                        # 构建更新结果
+                        update_result = {
+                            "key": mask_key(key_obj.key),
+                            "valid": validation_result.get("valid", False),
+                            "status": "success" if validation_result.get("valid", False) else "failed"
+                        }
+                        
+                        if validation_result.get("valid", False):
+                            # 获取余额，更新密钥
+                            balance = validation_result.get("balance", 0.0)
+                            update_result["balance"] = balance
+                            
+                            # 在数据库中更新密钥
+                            async for update_session in get_async_db_session():
+                                try:
+                                    # 重新查询以避免并发问题
+                                    key_query = select(ApiKey).where(ApiKey.key == key_obj.key)
+                                    key_result = await update_session.execute(key_query)
+                                    db_key = key_result.scalar_one_or_none()
+                                    
+                                    if db_key:
+                                        db_key.balance = balance
+                                        # 更新最后使用时间
+                                        if hasattr(db_key, 'last_used'):
+                                            db_key.last_used = time.time()
+                                        await update_session.commit()
+                                        
+                                        logger.info(f"密钥刷新成功: {mask_key(key_obj.key)}, 余额: {balance}")
+                                        async with results_lock:
+                                            results["refreshed"] += 1
+                                except Exception as db_error:
+                                    logger.error(f"数据库更新密钥时出错: {str(db_error)}")
+                                    update_result["status"] = "db_error"
+                                    update_result["error"] = str(db_error)
+                                    async with results_lock:
+                                        results["failed"] += 1
+                        else:
+                            # 密钥验证失败，禁用密钥
+                            error_message = validation_result.get("error", "密钥无效")
+                            logger.warning(f"API密钥无效，将被禁用: {mask_key(key_obj.key)}, 错误: {error_message}")
+                            
+                            update_result["error"] = error_message
+                            
+                            # 禁用密钥
+                            async for update_session in get_async_db_session():
+                                try:
+                                    # 重新查询以避免并发问题
+                                    key_query = select(ApiKey).where(ApiKey.key == key_obj.key)
+                                    key_result = await update_session.execute(key_query)
+                                    db_key = key_result.scalar_one_or_none()
+                                    
+                                    if db_key:
+                                        db_key.enabled = False  # 禁用密钥而不是删除
+                                        await update_session.commit()
+                                except Exception as db_error:
+                                    logger.error(f"禁用无效密钥时出错: {str(db_error)}")
+                                    update_result["db_error"] = str(db_error)
+                            
+                            async with results_lock:
+                                results["failed"] += 1
+                    
+                    except Exception as e:
+                        logger.error(f"刷新API密钥时出错: {mask_key(key_obj.key)}, 错误: {str(e)}")
+                        async with results_lock:
+                            results["failed"] += 1
+                        return {"key": mask_key(key_obj.key), "status": "error", "error": str(e)}
+                    
+                    return update_result
+            
+            # 创建一个锁用于更新结果计数
+            results_lock = asyncio.Lock()
+            
+            # 创建所有刷新任务
+            for key_obj in keys:
+                task = asyncio.create_task(refresh_single_key(key_obj))
+                tasks.append(task)
+            
+            # 等待所有任务完成
+            refresh_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # 处理结果
+            valid_results = [r for r in refresh_results if isinstance(r, dict)]
+            error_results = [r for r in refresh_results if isinstance(r, Exception)]
+            
+            if error_results:
+                for error in error_results:
+                    logger.error(f"刷新任务异常: {str(error)}")
+            
+            refreshed_keys = results["refreshed"]
+            failed_keys = results["failed"]
+            
+            # 记录结果
+            logger.info(f"刷新API密钥完成: 成功 {refreshed_keys} 个, 失败 {failed_keys} 个, 总计 {total_keys} 个")
+        
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": f"刷新完成: 成功 {refreshed_keys} 个, 失败 {failed_keys} 个, 总计 {total_keys} 个",
+                "refreshed": refreshed_keys,
+                "failed": failed_keys,
+                "total": total_keys
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f"刷新所有API密钥时发生错误: {str(e)}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "message": f"刷新API密钥时发生错误: {str(e)}"
+            }
+        )
+
+
 @app.post("/log_cleanup_config")
 async def update_log_cleanup_config(request: Request, authorized: bool = Depends(require_auth)):
     """更新日志清理配置"""
@@ -1499,27 +1724,113 @@ async def update_log_cleanup_config(request: Request, authorized: bool = Depends
 
 @app.get("/health")
 async def health_check():
-    """健康检查端点，用于监控应用状态"""
-    app_start_time = time.time()
-    health_data = {
+    """健康检查接口，验证系统各组件状态"""
+    # 准备响应结构
+    health_status = {
         "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "version": app.version,
-        "uptime": round(time.time() - app.state.startup_timestamp, 2) if hasattr(app.state, "startup_timestamp") else None,
+        "details": {
+            "api_service": "healthy",
+            "database": "healthy",
+            "uptime": 0,
+            "memory_usage": 0,
+            "cpu_usage": 0,
+            "active_keys": 0,
+            "version": "1.0.0"
+        },
+        "timestamp": time.time()
     }
     
-    # 检查数据库状态 - 使用同步检查，因为这是专门为健康检查设计的函数
-    db_health = check_db_health()
-    health_data["database"] = db_health
+    # 尝试检查数据库连接
+    db_start_time = time.time()
+    db_error = None
     
-    # 如果数据库不健康，整体状态就不健康
-    if db_health["status"] != "healthy":
-        health_data["status"] = "degraded"
+    try:
+        if DB_TYPE == 'sqlite':
+            with get_db_session() as session:
+                result = session.execute(text("SELECT 1")).scalar()
+                if result != 1:
+                    raise Exception("数据库连接测试失败")
+        else:  # MySQL
+            async with new_session() as session:
+                result = await session.execute(text("SELECT 1"))
+                if result.scalar() != 1:
+                    raise Exception("数据库连接测试失败")
+                
+                # 检查活跃密钥数量
+                active_keys_query = select(func.count(ApiKey.id)).where(ApiKey.enabled == True)
+                active_keys_result = await session.execute(active_keys_query)
+                health_status["details"]["active_keys"] = active_keys_result.scalar() or 0
+                
+        # 记录数据库响应时间
+        db_response_time = time.time() - db_start_time
+        health_status["details"]["database_response_time"] = round(db_response_time * 1000, 2)  # 毫秒
+        
+    except Exception as e:
+        db_error = str(e)
+        health_status["status"] = "degraded"
+        health_status["details"]["database"] = "unhealthy"
+        health_status["details"]["database_error"] = db_error
     
-    # 计算API响应时间
-    health_data["response_time_ms"] = round((time.time() - app_start_time) * 1000, 2)
+    # 检查外部API连通性
+    api_start_time = time.time()
+    api_error = None
     
-    return JSONResponse(content=health_data)
+    try:
+        # 使用共享会话发送HTTP GET请求测试
+        session = await http_client.get_session()
+        timeout = aiohttp.ClientTimeout(total=5)  # 5秒超时
+        async with session.get("https://api.siliconflow.cn/v1/models", timeout=timeout) as response:
+            if response.status != 200:
+                raise Exception(f"API连接测试失败，状态码: {response.status}")
+            
+            # 记录API响应时间
+            api_response_time = time.time() - api_start_time
+            health_status["details"]["api_response_time"] = round(api_response_time * 1000, 2)  # 毫秒
+    except Exception as e:
+        api_error = str(e)
+        health_status["status"] = "degraded"
+        health_status["details"]["api_service"] = "unhealthy"
+        health_status["details"]["api_error"] = api_error
+    
+    # 获取系统运行时间
+    if hasattr(app, "state") and hasattr(app.state, "startup_timestamp"):
+        uptime_seconds = time.time() - app.state.startup_timestamp
+        days, remainder = divmod(uptime_seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        health_status["details"]["uptime"] = {
+            "total_seconds": int(uptime_seconds),
+            "formatted": f"{int(days)}天 {int(hours)}小时 {int(minutes)}分钟 {int(seconds)}秒"
+        }
+    
+    # 获取内存使用情况
+    try:
+        import psutil
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        health_status["details"]["memory_usage"] = {
+            "rss_mb": round(memory_info.rss / (1024 * 1024), 2),  # RSS内存(MB)
+            "vms_mb": round(memory_info.vms / (1024 * 1024), 2),   # 虚拟内存(MB)
+            "percent": round(process.memory_percent(), 2)          # 内存使用百分比
+        }
+        
+        # CPU使用情况
+        health_status["details"]["cpu_usage"] = {
+            "percent": round(process.cpu_percent(interval=0.1), 2),  # CPU使用百分比
+            "threads": len(process.threads()),                        # 线程数
+            "system_load": [round(x, 2) for x in psutil.getloadavg()]  # 系统负载
+        }
+    except ImportError:
+        health_status["details"]["memory_usage"] = "未安装psutil，无法获取内存信息"
+        health_status["details"]["cpu_usage"] = "未安装psutil，无法获取CPU信息"
+    except Exception as e:
+        health_status["details"]["system_error"] = str(e)
+    
+    # 设置响应的HTTP状态码
+    status_code = 200 if health_status["status"] == "healthy" else 503
+    
+    return JSONResponse(content=health_status, status_code=status_code)
 
 
 @app.get("/metrics")
@@ -1532,6 +1843,7 @@ async def metrics(authorized: bool = Depends(require_auth)):
             "usage": {},
             "today": {},
             "model_usage": [],
+            "daily_trend": [],
             "system": {
                 "uptime_seconds": round(time.time() - app.state.startup_timestamp, 2) if hasattr(app.state, "startup_timestamp") else None,
                 "process_memory_mb": round(get_process_memory_mb(), 2)
@@ -1583,6 +1895,37 @@ async def metrics(authorized: bool = Depends(require_auth)):
             result = await session.execute(model_usage_query)
             model_usage_result = result.all()
             
+            # 获取最近一周的每日趋势
+            week_ago = datetime.now() - timedelta(days=7)
+            week_timestamp = week_ago.timestamp()
+            
+            # 根据数据库类型构建不同的日期格式化查询
+            if DB_TYPE == 'sqlite':
+                date_func = func.strftime('%Y-%m-%d', func.datetime(Log.call_time, 'unixepoch'))
+            else:  # mysql
+                date_func = func.date(func.from_unixtime(Log.call_time))
+            
+            try:
+                daily_trend_query = select(
+                    date_func.label('date'),
+                    func.count().label('count'),
+                    func.sum(Log.total_tokens).label('tokens')
+                ).where(Log.call_time >= week_timestamp).group_by('date').order_by('date')
+                
+                result = await session.execute(daily_trend_query)
+                daily_trend = [
+                    {
+                        "date": str(date),
+                        "count": count,
+                        "tokens": tokens or 0
+                    }
+                    for date, count, tokens in result
+                ]
+                metrics_data["daily_trend"] = daily_trend
+            except Exception as e:
+                logger.error(f"获取每日趋势统计出错: {str(e)}")
+                metrics_data["daily_trend"] = []  # 出错时返回空列表
+            
             # 构建响应
             metrics_data["api_keys"] = {
                 "count": key_count,
@@ -1631,6 +1974,288 @@ def get_process_memory_mb():
         return 0  # 如果psutil不可用，返回0
     except Exception:
         return 0  # 出错时返回0
+
+@app.post("/v1/{path:path}")
+async def proxy_request(request: Request, path: str):
+    """代理转发所有API请求到原始API接口"""
+    # 获取客户端原始请求的数据和头信息
+    request_data = await request.body()
+    raw_data = request_data.decode('utf-8') if request_data else None
+    request_headers = dict(request.headers)
+    method = request.method
+    
+    # 提取模型名称，用于统计和日志
+    model_name = "unknown"
+    content_type = request_headers.get("content-type", "")
+    
+    if content_type and "application/json" in content_type and raw_data:
+        try:
+            json_data = json.loads(raw_data)
+            # 针对不同路径提取模型信息
+            if path == "chat/completions" and "model" in json_data:
+                model_name = json_data["model"]
+            elif path == "embeddings" and "model" in json_data:
+                model_name = json_data["model"]
+        except json.JSONDecodeError:
+            logger.warning("无法解析请求JSON数据以提取模型名称")
+    
+    # 检查授权头
+    auth_header = request_headers.get("authorization", "")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        logger.warning("缺少有效的Authorization头")
+        return JSONResponse(
+            status_code=401,
+            content={"error": "缺少有效的Authorization头"}
+        )
+    
+    # 从数据库中随机选择一个API密钥
+    async with new_session() as session:
+        try:
+            # 以抽奖方式随机选择一个密钥
+            stmt = select(Key).where(Key.active == 1).order_by(func.random()).limit(1)
+            result = await session.execute(stmt)
+            key = result.scalar_one_or_none()
+            
+            if not key:
+                logger.error("数据库中没有可用的API密钥")
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": "没有可用的API密钥"}
+                )
+            
+            # 提取客户端真实IP
+            client_ip = request.client.host if request.client else "未知IP"
+            # 尝试从X-Forwarded-For或其他代理头获取真实IP
+            forwarded_for = request_headers.get("x-forwarded-for")
+            if forwarded_for:
+                # 取第一个IP作为客户端真实IP
+                client_ip = forwarded_for.split(",")[0].strip()
+            
+            # 提取自定义请求ID或生成一个
+            request_id = request_headers.get("x-request-id", str(uuid.uuid4()))
+            
+            # 准备转发请求
+            target_url = f"https://api.siliconflow.cn/v1/{path}"
+            # 继承原始请求头，但修改Authorization头
+            headers = {**request_headers}
+            headers["Authorization"] = f"Bearer {key.key}"
+            
+            # 移除可能导致问题的代理头
+            for header in ["host", "content-length", "transfer-encoding"]:
+                if header in headers:
+                    del headers[header]
+            
+            # 添加请求跟踪ID
+            headers["x-request-id"] = request_id
+            
+            # 记录请求信息
+            logger.info(f"转发请求: {request_id} | 客户端: {client_ip} | 路径: {path} | 模型: {model_name} | 密钥: {mask_key(key.key)}")
+            
+            # 估算Token数量
+            token_count = 0
+            if raw_data and path == "chat/completions":
+                try:
+                    token_count = estimate_chat_tokens(json.loads(raw_data))
+                    logger.info(f"估算请求Token: {token_count} | 请求ID: {request_id}")
+                except Exception as e:
+                    logger.warning(f"Token估算失败: {str(e)}")
+            
+            # 使用全局HTTP会话发送请求
+            session = await http_client.get_session()
+            target_timeout = aiohttp.ClientTimeout(total=600)  # 设置10分钟超时
+            
+            # 根据请求方法发送不同类型的请求
+            async with session.request(
+                method=method,
+                url=target_url,
+                headers=headers,
+                data=request_data,
+                timeout=target_timeout,
+                allow_redirects=True
+            ) as response:
+                # 读取响应数据
+                response_data = await response.read()
+                response_headers = dict(response.headers)
+                
+                # 计算完成Token(对于流式输出以外的内容)
+                completion_tokens = 0
+                if not response_headers.get("content-type", "").startswith("text/event-stream") and path == "chat/completions":
+                    try:
+                        response_json = json.loads(response_data)
+                        if "usage" in response_json and "completion_tokens" in response_json["usage"]:
+                            completion_tokens = response_json["usage"]["completion_tokens"]
+                            logger.info(f"完成Token: {completion_tokens} | 请求ID: {request_id}")
+                    except Exception as e:
+                        logger.warning(f"无法从响应中提取Token使用信息: {str(e)}")
+                
+                # 记录日志
+                log_entry = Log(
+                    model=model_name,
+                    path=path,
+                    key_id=key.id,
+                    key=mask_key(key.key),
+                    client_ip=client_ip,
+                    request_id=request_id,
+                    request_tokens=token_count,
+                    completion_tokens=completion_tokens,
+                    status_code=response.status,
+                    call_time=int(time.time())
+                )
+                
+                try:
+                    session.add(log_entry)
+                    await session.commit()
+                except Exception as e:
+                    logger.error(f"记录日志失败: {str(e)}", exc_info=True)
+                    await session.rollback()
+                
+                # 更新密钥使用计数
+                try:
+                    key.usage_count += 1
+                    key.last_used = int(time.time())
+                    await session.commit()
+                except Exception as e:
+                    logger.error(f"更新密钥使用计数失败: {str(e)}", exc_info=True)
+                    await session.rollback()
+                
+                # 构建响应
+                logger.info(f"请求完成: {request_id} | 状态码: {response.status} | 总Token: {token_count + completion_tokens}")
+                
+                # 处理流式响应
+                if response_headers.get("content-type", "").startswith("text/event-stream"):
+                    return StreamingResponse(
+                        content=BytesIO(response_data),
+                        status_code=response.status,
+                        headers=response_headers
+                    )
+                
+                # 处理普通响应
+                return Response(
+                    content=response_data,
+                    status_code=response.status,
+                    headers=response_headers
+                )
+        
+        except NoResultFound:
+            logger.error("没有找到活跃的API密钥")
+            return JSONResponse(
+                status_code=500,
+                content={"error": "没有可用的API密钥"}
+            )
+        except Exception as e:
+            logger.error(f"代理请求过程中发生错误: {str(e)}", exc_info=True)
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"服务器内部错误: {str(e)}"}
+            )
+
+@app.get("/")
+async def root(session_id: str = Cookie(None)):
+    """根路径处理，返回登录页面或重定向到管理页面"""
+    # 检查用户是否已登录
+    if session_id:
+        try:
+            valid_session = await validate_session(session_id)
+            if valid_session:
+                # 用户已登录，重定向到 admin 页面
+                return RedirectResponse(url="/admin")
+        except Exception as e:
+            logger.error(f"检查会话时出错: {str(e)}")
+            # 出错时继续显示登录页面
+    
+    # 用户未登录或会话无效，显示登录页面
+    return FileResponse("static/index.html")
+
+
+@app.post("/login")
+async def login(request: Request):
+    """处理用户登录请求"""
+    try:
+        data = await request.json()
+        username = data.get("username")
+        password = data.get("password")
+        
+        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+            # 创建会话
+            session_id = await create_session(username)
+            
+            # 构建响应
+            response = JSONResponse({"message": "登录成功"})
+            
+            # 设置cookie
+            response.set_cookie(
+                key="session_id",
+                value=session_id,
+                httponly=True,
+                max_age=86400,  # 24小时
+                samesite="lax"
+            )
+            
+            return response
+        else:
+            # 登录失败
+            logger.warning(f"登录失败: 用户名 {username}")
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "用户名或密码错误"}
+            )
+    except Exception as e:
+        logger.error(f"登录处理出错: {str(e)}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"登录处理出错: {str(e)}"}
+        )
+
+
+@app.get("/admin")
+async def admin_page(authorized: bool = Depends(require_auth)):
+    """管理员页面，需要身份验证"""
+    response = FileResponse("static/admin.html")
+    # 添加缓存控制头
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
+@app.get("/logout")
+async def logout(session_id: str = Cookie(None)):
+    """注销登录，删除会话"""
+    # 清除数据库中的会话
+    if session_id:
+        try:
+            async for session in get_async_db_session():
+                # 删除会话
+                delete_query = DbSession.__table__.delete().where(DbSession.session_id == session_id)
+                await session.execute(delete_query)
+                await session.commit()
+                logger.info(f"会话已删除: {session_id}")
+        except Exception as e:
+            logger.error(f"删除会话时出错: {str(e)}")
+    
+    # 创建重定向响应
+    response = RedirectResponse(url="/", status_code=303)  # 使用 303 See Other 状态码
+    
+    # 添加缓存控制头，防止浏览器缓存
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    
+    # 删除 cookie
+    response.delete_cookie(
+        key="session_id",
+        path="/",  # 确保删除所有路径下的 cookie
+        httponly=True
+    )
+    
+    return response
+
+def mask_key(key: str) -> str:
+    """对API密钥进行掩码，只保留前4位和后4位，中间用星号替代"""
+    if not key or len(key) < 8:
+        return "****"
+    return f"{key[:4]}...{key[-4:]}"
+
 if __name__ == "__main__":
     import uvicorn
 
