@@ -66,7 +66,8 @@ LOGGING_CONFIG["formatters"]["default"]["fmt"] = (
 app = FastAPI(
     title="SiliconFlow API",
     description="SiliconFlow API代理服务",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan  # 使用lifespan上下文管理器
 )
 
 # Mount static files
@@ -192,6 +193,37 @@ async def backup_logs(cutoff_timestamp):
     except Exception as e:
         logger.error(f"备份日志失败: {str(e)}")
 
+# 定义应用生命周期管理器
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 启动时运行初始化任务
+    app.state.startup_timestamp = time.time()
+    logger.info("应用启动，初始化清理任务...")
+    
+    # 创建日志清理任务
+    cleanup_task = asyncio.create_task(auto_clean_logs())
+    
+    # 将任务保存在应用状态中，以便稍后引用
+    app.state.cleanup_task = cleanup_task
+    
+    yield  # 应用正常运行的部分
+    
+    # 应用关闭时执行清理
+    logger.info("应用关闭，清理资源...")
+    
+    # 取消清理任务
+    if hasattr(app.state, 'cleanup_task') and not app.state.cleanup_task.done():
+        app.state.cleanup_task.cancel()
+        try:
+            await app.state.cleanup_task
+        except asyncio.CancelledError:
+            logger.info("日志清理任务已取消")
+    
+    # 仅在SQLite模式下关闭连接
+    if DB_TYPE == 'sqlite' and 'conn' in globals():
+        conn.close()
+        logger.info("SQLite数据库连接已关闭")
+
 # 自动清理日志的函数
 async def auto_clean_logs():
     """定时清理过期的日志记录"""
@@ -227,29 +259,22 @@ async def auto_clean_logs():
             next_run = datetime.now() + timedelta(hours=LOG_CLEAN_INTERVAL_HOURS)
             logger.info(f"下一次日志清理将在 {next_run.strftime('%Y-%m-%d %H:%M:%S')} 进行")
             
-            await asyncio.sleep(LOG_CLEAN_INTERVAL_HOURS * 3600)  # 转换为秒
+            # 添加检查任务是否应该停止的功能
+            try:
+                await asyncio.sleep(LOG_CLEAN_INTERVAL_HOURS * 3600)  # 转换为秒
+            except asyncio.CancelledError:
+                logger.info("日志清理任务被取消")
+                break
         
         except Exception as e:
             logger.error(f"日志自动清理出错: {str(e)}")
-            await asyncio.sleep(3600)  # 发生错误时等待1小时后重试
-
-# 启动时运行自动清理任务
-@app.on_event("startup")
-async def startup_event():
-    # 记录启动时间戳
-    app.state.startup_timestamp = time.time()
-    
-    logger.info("应用启动，初始化清理任务...")
-    asyncio.create_task(auto_clean_logs())
-
-# 应用关闭时确保连接关闭
-@app.on_event("shutdown")
-async def shutdown_event():
-    logger.info("应用关闭，清理资源...")
-    # 仅在SQLite模式下关闭连接
-    if DB_TYPE == 'sqlite' and 'conn' in globals():
-        conn.close()
-        print("SQLite数据库连接已关闭")
+            
+            # 同样添加检查是否应该停止的功能
+            try:
+                await asyncio.sleep(3600)  # 发生错误时等待1小时后重试
+            except asyncio.CancelledError:
+                logger.info("日志清理任务被取消")
+                break
 
 # Custom exception handlers
 @app.exception_handler(StarletteHTTPException)

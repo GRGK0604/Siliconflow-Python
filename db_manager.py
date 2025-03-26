@@ -158,13 +158,18 @@ def get_db_session():
 # 上下文管理器，用于处理数据库会话 - 异步版本
 async def get_async_db_session():
     """提供数据库会话的异步上下文管理器"""
-    async with Async_Session_factory() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception as e:
+    session = None
+    try:
+        session = Async_Session_factory()
+        yield session
+        await session.commit()
+    except Exception as e:
+        if session:
             await session.rollback()
-            raise e
+        raise e
+    finally:
+        if session:
+            await session.close()
 
 # 初始化数据库表
 def init_db():
