@@ -1,0 +1,1206 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>硅基 KEY 池 - 密钥管理</title>
+    <link rel="icon" type="image/x-icon" href="/static/logo.png">
+    <style>
+        :root {
+            /* Light theme colors */
+            --bg-primary: #f8fafc;
+            --bg-secondary: #ffffff;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --border-color: #e2e8f0;
+            --accent-primary: #3b82f6;
+            --accent-secondary: #8b5cf6;
+            --accent-primary-hover: #2563eb;
+            --accent-primary-light: rgba(59, 130, 246, 0.1);
+            --success-color: #10b981;
+            --danger-color: #ef4444;
+            --warning-color: #f59e0b;
+            --success-bg: rgba(16, 185, 129, 0.1);
+            --danger-bg: rgba(239, 68, 68, 0.1);
+            --warning-bg: rgba(245, 158, 11, 0.1);
+            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --header-bg: var(--bg-secondary);
+            --table-header-bg: rgba(59, 130, 246, 0.05);
+            --table-row-hover: rgba(59, 130, 246, 0.03);
+        }
+
+        [data-theme="dark"] {
+            /* Dark theme colors */
+            --bg-primary: #111827;
+            --bg-secondary: #1f2937;
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --border-color: #374151;
+            --accent-primary: #3b82f6;
+            --accent-secondary: #8b5cf6;
+            --accent-primary-hover: #60a5fa;
+            --accent-primary-light: rgba(59, 130, 246, 0.2);
+            --success-color: #10b981;
+            --danger-color: #ef4444;
+            --warning-color: #f59e0b;
+            --success-bg: rgba(16, 185, 129, 0.2);
+            --danger-bg: rgba(239, 68, 68, 0.2);
+            --warning-bg: rgba(245, 158, 11, 0.2);
+            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+            --header-bg: var(--bg-secondary);
+            --table-header-bg: rgba(59, 130, 246, 0.1);
+            --table-row-hover: rgba(59, 130, 246, 0.05);
+        }
+
+        /* Common variables */
+        :root, [data-theme="light"], [data-theme="dark"] {
+            --radius-sm: 0.375rem;
+            --radius-md: 0.5rem;
+            --radius-lg: 0.75rem;
+            --transition: all 0.2s ease;
+            --spacing-xs: 0.25rem;
+            --spacing-sm: 0.5rem;
+            --spacing-md: 1rem;
+            --spacing-lg: 1.5rem;
+            --spacing-xl: 2rem;
+            --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html {
+            font-size: 16px;
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.5;
+            min-height: 100vh;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        /* Header and navigation */
+        .header {
+            background-color: var(--header-bg);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            padding: var(--spacing-md);
+            transition: var(--transition);
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 var(--spacing-md);
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-sm);
+        }
+
+        .logo {
+            width: 2rem;
+            height: 2rem;
+        }
+
+        .app-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--accent-primary);
+        }
+
+        .nav-actions {
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-md);
+        }
+
+        .theme-toggle {
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-size: 1.25rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: var(--spacing-xs);
+            border-radius: 50%;
+            width: 2.5rem;
+            height: 2.5rem;
+            transition: var(--transition);
+        }
+
+        .theme-toggle:hover {
+            background-color: var(--accent-primary-light);
+            color: var(--accent-primary);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: var(--spacing-sm);
+            background-color: var(--bg-secondary);
+            padding: var(--spacing-xs);
+            border-radius: var(--radius-md);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        }
+
+        .nav-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: var(--spacing-sm) var(--spacing-md);
+            border-radius: var(--radius-sm);
+            transition: var(--transition);
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .nav-link:hover {
+            color: var(--accent-primary);
+            background-color: var(--accent-primary-light);
+        }
+
+        .nav-link.active {
+            color: var(--accent-primary);
+            background-color: var(--accent-primary-light);
+            font-weight: 600;
+        }
+
+        .logout-btn {
+            color: var(--danger-color);
+            text-decoration: none;
+            padding: var(--spacing-sm) var(--spacing-md);
+            border-radius: var(--radius-sm);
+            transition: var(--transition);
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .logout-btn:hover {
+            background-color: var(--danger-bg);
+        }
+
+        /* Main content */
+        .main-content {
+            padding: var(--spacing-xl) 0;
+        }
+
+        .section {
+            margin-bottom: var(--spacing-xl);
+        }
+
+        .section-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: var(--spacing-lg);
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-sm);
+        }
+
+        /* Cards */
+        .card {
+            background-color: var(--bg-secondary);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--card-shadow);
+            padding: var(--spacing-lg);
+            margin-bottom: var(--spacing-lg);
+            border: 1px solid var(--border-color);
+            transition: var(--transition);
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        /* Stats grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: var(--spacing-md);
+            margin-bottom: var(--spacing-xl);
+        }
+
+        .stat-card {
+            background-color: var(--bg-secondary);
+            padding: var(--spacing-md);
+            border-radius: var(--radius-md);
+            box-shadow: var(--card-shadow);
+            border: 1px solid var(--border-color);
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-md);
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        .stat-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 3rem;
+            height: 3rem;
+            border-radius: var(--radius-md);
+            flex-shrink: 0;
+            font-size: 1.25rem;
+        }
+
+        .stat-icon-users {
+            background-color: rgba(147, 51, 234, 0.15);
+            color: #9333ea;
+        }
+
+        .stat-icon-active {
+            background-color: rgba(22, 163, 74, 0.15);
+            color: #16a34a;
+        }
+
+        .stat-icon-calls {
+            background-color: rgba(234, 88, 12, 0.15);
+            color: #ea580c;
+        }
+
+        .stat-icon-tokens {
+            background-color: rgba(2, 132, 199, 0.15);
+            color: #0284c7;
+        }
+        
+        .stat-content {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            margin-bottom: var(--spacing-xs);
+        }
+        
+        .stat-value {
+            font-weight: 700;
+            color: var(--text-primary);
+            font-size: 1.5rem;
+            line-height: 1.2;
+        }
+
+        /* Button styles */
+        .button-group {
+            display: flex;
+            gap: var(--spacing-sm);
+            margin-bottom: var(--spacing-lg);
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: var(--spacing-sm) var(--spacing-lg);
+            border: none;
+            border-radius: var(--radius-md);
+            font-weight: 500;
+            cursor: pointer;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-sm);
+            font-size: 0.875rem;
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .btn-primary {
+            background-color: var(--accent-primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--accent-primary-hover);
+        }
+
+        .btn-secondary {
+            background-color: var(--bg-secondary);
+            color: var(--accent-primary);
+            border: 1px solid var(--accent-primary);
+        }
+
+        .btn-secondary:hover {
+            background-color: var(--accent-primary-light);
+        }
+
+        .btn-danger {
+            background-color: var(--bg-secondary);
+            color: var(--danger-color);
+            border: 1px solid var(--danger-color);
+        }
+
+        .btn-danger:hover {
+            background-color: var(--danger-bg);
+        }
+
+        /* Message styles */
+        #message {
+            padding: var(--spacing-md);
+            border-radius: var(--radius-md);
+            margin-bottom: var(--spacing-lg);
+            display: none;
+            font-size: 0.875rem;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        #message.success {
+            background-color: var(--success-bg);
+            color: var(--success-color);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            display: block !important;
+        }
+
+        #message.error {
+            background-color: var(--danger-bg);
+            color: var(--danger-color);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            display: block !important;
+        }
+
+        /* Filter styles */
+        .filter-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--spacing-md);
+            margin-bottom: var(--spacing-lg);
+            background-color: var(--bg-secondary);
+            padding: var(--spacing-lg);
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-color);
+            box-shadow: var(--card-shadow);
+        }
+
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-sm);
+            flex: 1 1 auto;
+        }
+
+        .filter-label {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            white-space: nowrap;
+            font-weight: 500;
+        }
+
+        .filter-input {
+            padding: var(--spacing-sm);
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            font-size: 0.875rem;
+            flex: 1;
+            transition: var(--transition);
+        }
+
+        .filter-input:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 2px var(--accent-primary-light);
+        }
+
+        /* Table styles */
+        .table-container {
+            overflow-x: auto;
+            margin-bottom: var(--spacing-lg);
+            background-color: var(--bg-secondary);
+            border-radius: var(--radius-md);
+            box-shadow: var(--card-shadow);
+            border: 1px solid var(--border-color);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: var(--spacing-md);
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 0.875rem;
+        }
+
+        th {
+            background-color: var(--table-header-bg);
+            font-weight: 600;
+            color: var(--text-primary);
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+            position: relative;
+        }
+
+        th:hover {
+            background-color: var(--accent-primary-light);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover td {
+            background-color: var(--table-row-hover);
+        }
+
+        /* Key actions */
+        .key-actions {
+            display: flex;
+            gap: var(--spacing-sm);
+            flex-wrap: wrap;
+        }
+
+        .action-btn {
+            padding: var(--spacing-xs) var(--spacing-sm);
+            border-radius: var(--radius-sm);
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--spacing-xs);
+        }
+
+        .refresh-btn {
+            background-color: var(--bg-secondary);
+            color: var(--accent-primary);
+            border: 1px solid var(--accent-primary);
+        }
+
+        .refresh-btn:hover {
+            background-color: var(--accent-primary-light);
+            transform: translateY(-1px);
+        }
+
+        /* Pagination */
+        .pagination-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: var(--spacing-md);
+            margin-bottom: var(--spacing-xl);
+        }
+
+        .pagination {
+            display: flex;
+            gap: var(--spacing-sm);
+        }
+
+        .pagination button {
+            min-width: 5rem;
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
+        }
+
+        .pagination-info {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        /* Key display */
+        .key-display {
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-sm);
+        }
+
+        .masked-key {
+            cursor: pointer;
+            font-family: monospace;
+            font-size: 0.875rem;
+            word-break: keep-all;
+            white-space: nowrap;
+            transition: var(--transition);
+        }
+
+        .full-key {
+            font-family: monospace;
+            font-size: 0.875rem;
+            word-break: break-all;
+        }
+
+        .copy-btn {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: var(--spacing-xs);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--radius-sm);
+            transition: var(--transition);
+        }
+
+        .copy-btn:hover {
+            background-color: var(--accent-primary-light);
+            color: var(--accent-primary);
+            transform: none;
+        }
+
+        /* Responsive styles */
+        @media (max-width: 992px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .filter-container {
+                flex-direction: column;
+                padding: var(--spacing-md);
+            }
+            
+            .filter-group {
+                width: 100%;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .header-content {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: var(--spacing-md);
+            }
+            
+            .nav-links {
+                width: 100%;
+                justify-content: space-around;
+            }
+            
+            .nav-link, .logout-btn {
+                padding: var(--spacing-xs) var(--spacing-sm);
+                font-size: 0.8rem;
+            }
+            
+            .button-group {
+                flex-wrap: wrap;
+            }
+            
+            .button-group button {
+                flex: 1 1 calc(50% - var(--spacing-sm));
+                justify-content: center;
+            }
+            
+            .key-display {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .copy-btn {
+                align-self: flex-end;
+                margin-top: -1.5rem;
+            }
+            
+            .key-actions {
+                flex-direction: column;
+                gap: var(--spacing-md);
+            }
+            
+            .key-status {
+                width: 100%;
+                justify-content: space-between;
+            }
+            
+            th, td {
+                padding: var(--spacing-sm);
+                font-size: 0.8rem;
+            }
+        }
+
+        @media (max-width: 576px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .header-title {
+                width: 100%;
+                justify-content: space-between;
+            }
+            
+            .button-group button {
+                flex: 1 1 100%;
+            }
+            
+            .button-group {
+                flex-direction: column;
+            }
+            
+            .key-actions {
+                flex-direction: column;
+            }
+            
+            .action-btn {
+                width: 100%;
+                padding: var(--spacing-sm);
+            }
+            
+            .pagination-container {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .pagination {
+                justify-content: center;
+            }
+            
+            .pagination button {
+                flex: 1;
+            }
+            
+            .hide-on-mobile {
+                display: none;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="header-title">
+                    <img src="/static/logo.png" alt="Logo" class="logo">
+                    <h1 class="app-title">硅基 KEY 池 - 密钥管理</h1>
+                </div>
+                <div class="nav-actions">
+                    <button id="themeToggle" class="theme-toggle" title="切换主题">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path>
+                        </svg>
+                    </button>
+                    <div class="nav-links">
+                        <a href="/admin" class="nav-link">首页</a>
+                        <a href="/keys" class="nav-link active">密钥管理</a>
+                        <a href="/logout" class="logout-btn">退出</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <div class="container">
+            <section class="section">
+                <div class="button-group">
+                    <button class="btn-primary" onclick="refreshAllKeys()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"></path>
+                        </svg>
+                        刷新所有密钥
+                    </button>
+                    <button class="btn-secondary" onclick="location.href='/admin'">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        导入新密钥
+                    </button>
+                </div>
+            </section>
+
+            <div id="message"></div>
+
+            <section class="section">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon stat-icon-users">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="8.5" cy="7" r="4"></circle>
+                                <path d="M20 8h2a4 4 0 0 1-4 4h-3.1"></path>
+                                <path d="M15 21H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2z"></path>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <div class="stat-label">总密钥数量</div>
+                            <div class="stat-value" id="totalKeysCount">0</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon stat-icon-active">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 22C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10-4.48 10-10 10z"></path>
+                                <path d="M12 16c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z"></path>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <div class="stat-label">总余额</div>
+                            <div class="stat-value" id="totalBalance">¥0.00</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon stat-icon-calls">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-2.08 19.58 19.58 0 0 1-6-2 2 2 0 0 1-2-2v-3a2 2 0 0 1 2.18-2 19.79 19.79 0 0 1 8.63 2.08 19.58 19.58 0 0 1 6 2 2 2 0 0 1 2 2z"></path>
+                                <path d="M22 10.24A2 2 0 0 1 20.18 8 19.79 19.79 0 0 1 12 6C5.21 4.92 2 8.14 2 12c0 3.86 3.21 7.08 10 8.14"></path>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <div class="stat-label">总调用次数</div>
+                            <div class="stat-value" id="totalCallCount">0</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon stat-icon-tokens">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 12.79A2 2 0 0 0 19 15v2a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-2.08 19.58 19.58 0 0 1-6-2 2 2 0 0 1-2-2v-3a2 2 0 0 1 2.18-2 19.79 19.79 0 0 1 8.63 2.08 19.58 19.58 0 0 1 6 2 2 2 0 0 1 2 2z"></path>
+                                <path d="M12 16c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z"></path>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <div class="stat-label">总tokens消耗</div>
+                            <div class="stat-value" id="totalTokens">0</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="section">
+                <div class="filter-container">
+                    <div class="filter-group">
+                        <span class="filter-label">密钥搜索:</span>
+                        <input type="text" id="keyFilter" class="filter-input" placeholder="输入密钥关键字" onkeyup="applyFilters()">
+                    </div>
+                    <div class="filter-group">
+                        <span class="filter-label">排序字段:</span>
+                        <select id="sortField" class="filter-input" onchange="changeSorting()">
+                            <option value="add_time">添加时间</option>
+                            <option value="balance">余额</option>
+                            <option value="usage_count">使用次数</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <span class="filter-label">排序方式:</span>
+                        <select id="sortOrder" class="filter-input" onchange="changeSorting()">
+                            <option value="desc">降序</option>
+                            <option value="asc">升序</option>
+                        </select>
+                    </div>
+                </div>
+            </section>
+
+            <section class="section">
+                <div class="table-container">
+                    <table id="keysTable">
+                        <thead>
+                            <tr>
+                                <th onclick="sortKeys('key')">密钥</th>
+                                <th onclick="sortKeys('balance')">余额</th>
+                                <th onclick="sortKeys('usage_count')">使用次数</th>
+                                <th class="hide-on-mobile" onclick="sortKeys('add_time')">添加时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="5" style="text-align: center;">加载中...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="pagination-container">
+                    <div class="pagination-info">
+                        第 <span id="currentPage">1</span> 页，共 <span id="totalPages">1</span> 页
+                    </div>
+                    <div class="pagination">
+                        <button id="prevPage" class="btn-secondary" onclick="changePage(-1)" disabled>上一页</button>
+                        <button id="nextPage" class="btn-secondary" onclick="changePage(1)">下一页</button>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <script>
+        // 主题切换功能
+        document.addEventListener('DOMContentLoaded', function() {
+            // 检查首选主题
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+            updateThemeIcon(savedTheme);
+            
+            // 主题切换事件
+            document.getElementById('themeToggle').addEventListener('click', function() {
+                const currentTheme = document.documentElement.getAttribute('data-theme');
+                const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+                
+                document.documentElement.setAttribute('data-theme', newTheme);
+                localStorage.setItem('theme', newTheme);
+                updateThemeIcon(newTheme);
+            });
+        });
+        
+        // 更新主题图标
+        function updateThemeIcon(theme) {
+            const iconContainer = document.getElementById('themeToggle');
+            if (theme === 'dark') {
+                iconContainer.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"></path></svg>`;
+            } else {
+                iconContainer.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg>`;
+            }
+        }
+        
+        // 全局变量
+        let currentPage = 1;
+        let totalPages = 1;
+        let currentSortField = 'add_time';
+        let currentSortOrder = 'desc';
+        let keyFilter = '';
+        let isMobile = window.innerWidth <= 768;
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            loadKeys();
+            fetchStats();
+            setupResponsiveHandlers();
+        });
+
+        // 设置响应式处理
+        function setupResponsiveHandlers() {
+            // 处理窗口大小变化
+            let resizeTimeout;
+            window.addEventListener('resize', function() {
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(function() {
+                    const newIsMobile = window.innerWidth <= 768;
+                    if (newIsMobile !== isMobile) {
+                        isMobile = newIsMobile;
+                        // 重新加载表格以应用新的布局
+                        loadKeys();
+                    }
+                }, 250);
+            });
+        }
+
+        // 格式化密钥显示
+        function formatKeyDisplay(key) {
+            if (isMobile) {
+                return `${key.substring(0, 6)}...${key.substring(key.length - 3)}`;
+            } else {
+                return `${key.substring(0, 8)}...${key.substring(key.length - 4)}`;
+            }
+        }
+
+        // 格式化时间显示
+        function formatDate(timestamp) {
+            const date = new Date(timestamp * 1000);
+            if (isMobile) {
+                return `${date.getMonth()+1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`;
+            } else {
+                return date.toLocaleString('zh-CN');
+            }
+        }
+
+        // 显示消息
+        function showMessage(text, type = 'success') {
+            const messageEl = document.getElementById('message');
+            messageEl.textContent = text;
+            messageEl.className = type;
+            messageEl.style.display = 'block';
+            setTimeout(() => messageEl.style.display = 'none', 3000);
+        }
+
+        // 获取总体统计信息
+        async function fetchStats() {
+            try {
+                const response = await fetch('/stats');
+                if (!response.ok) {
+                    throw new Error('获取统计信息失败');
+                }
+                
+                const data = await response.json();
+                document.getElementById('totalKeysCount').textContent = data.key_count;
+                document.getElementById('totalBalance').textContent = `¥${parseFloat(data.total_balance).toFixed(2)}`;
+                document.getElementById('totalCallCount').textContent = data.total_calls || 0;
+                document.getElementById('totalTokens').textContent = data.total_tokens || 0;
+            } catch (error) {
+                console.error('Error fetching stats:', error);
+            }
+        }
+
+        // 加载密钥
+        async function loadKeys() {
+            try {
+                const tbody = document.querySelector("#keysTable tbody");
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">加载中...</td></tr>';
+                
+                let url = `/api/keys?page=${currentPage}&sort_field=${currentSortField}&sort_order=${currentSortOrder}`;
+                
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                totalPages = Math.ceil(data.total / data.page_size);
+                document.getElementById('currentPage').textContent = currentPage;
+                document.getElementById('totalPages').textContent = totalPages;
+                
+                document.getElementById('prevPage').disabled = currentPage <= 1;
+                document.getElementById('nextPage').disabled = currentPage >= totalPages;
+                
+                tbody.innerHTML = '';
+                
+                if (data.keys.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">没有找到密钥</td></tr>';
+                    return;
+                }
+                
+                const filteredKeys = keyFilter ? 
+                    data.keys.filter(key => key.key.toLowerCase().includes(keyFilter)) : 
+                    data.keys;
+                
+                if (filteredKeys.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">没有找到匹配的密钥</td></tr>';
+                    return;
+                }
+                
+                document.querySelectorAll('th').forEach(th => {
+                    th.classList.remove('active');
+                    const field = th.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
+                    if (field === currentSortField) {
+                        th.classList.add('active');
+                        th.textContent = th.textContent.replace(/ [↑↓]$/, '');
+                        th.textContent += currentSortField === 'key' ? '' : (currentSortOrder === 'asc' ? ' ↑' : ' ↓');
+                    }
+                });
+                
+                filteredKeys.forEach(key => {
+                    const tr = document.createElement('tr');
+                    tr.setAttribute('data-key', key.key);
+                    
+                    const maskedKey = formatKeyDisplay(key.key);
+                    const formattedDate = formatDate(key.add_time);
+                    
+                    tr.innerHTML = `
+                        <td>
+                            <div class="key-display">
+                                <span class="masked-key" title="点击显示完整密钥" onclick="toggleKeyVisibility(this, '${key.key}')">${maskedKey}</span>
+                                <button class="copy-btn" onclick="copyToClipboard('${key.key}', event)" title="复制密钥">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        </td>
+                        <td>¥${parseFloat(key.balance).toFixed(2)}</td>
+                        <td>${key.usage_count}</td>
+                        <td class="hide-on-mobile">${formattedDate}</td>
+                        <td>
+                            <div class="key-actions">
+                                <button class="action-btn refresh-btn" onclick="refreshKey('${key.key}')">刷新</button>
+                            </div>
+                        </td>
+                    `;
+                    
+                    tbody.appendChild(tr);
+                });
+                
+            } catch (error) {
+                showMessage(error.message, 'error');
+            }
+        }
+
+        // 刷新单个密钥
+        async function refreshKey(key) {
+            try {
+                const messageEl = document.getElementById("message");
+                messageEl.textContent = "正在刷新，请稍候...";
+                messageEl.className = "success";
+                messageEl.style.display = 'block';
+                
+                const response = await fetch('/api/refresh_key', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ key: key })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`刷新失败: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                messageEl.textContent = data.message;
+                
+                // 只更新这一行，而不是整个表格
+                const keyRow = document.querySelector(`tr[data-key="${key}"]`);
+                if (keyRow) {
+                    // 获取最新的密钥信息
+                    const keyResponse = await fetch(`/api/key_info?key=${key}`);
+                    if (keyResponse.ok) {
+                        const keyData = await keyResponse.json();
+                        // 更新余额
+                        const balanceCell = keyRow.querySelector('td:nth-child(2)');
+                        if (balanceCell) {
+                            balanceCell.textContent = `¥${parseFloat(keyData.balance).toFixed(2)}`;
+                        }
+                    }
+                }
+                
+                // 更新统计信息
+                fetchStats();
+            } catch (error) {
+                showMessage(`刷新密钥失败: ${error.message}`, "error");
+            }
+        }
+
+        // 刷新所有密钥
+        async function refreshAllKeys() {
+            try {
+                const messageEl = document.getElementById("message");
+                messageEl.textContent = "正在刷新所有密钥，请稍候...";
+                messageEl.className = "success";
+                messageEl.style.display = 'block';
+                
+                const response = await fetch('/refresh', { method: 'POST' });
+                const data = await response.json();
+                messageEl.textContent = data.message;
+                
+                loadKeys();
+                fetchStats();
+            } catch (error) {
+                showMessage('刷新失败：' + error.message, 'error');
+            }
+        }
+
+        // 应用过滤器
+        function applyFilters() {
+            keyFilter = document.getElementById('keyFilter').value.trim().toLowerCase();
+            currentPage = 1;
+            loadKeys();
+        }
+
+        // 更改排序
+        function changeSorting() {
+            currentSortField = document.getElementById('sortField').value;
+            currentSortOrder = document.getElementById('sortOrder').value;
+            currentPage = 1;
+            loadKeys();
+        }
+
+        // 点击表头排序
+        function sortKeys(field) {
+            if (currentSortField === field) {
+                // 切换排序方向
+                currentSortOrder = currentSortOrder === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSortField = field;
+                currentSortOrder = 'desc';
+            }
+            
+            // 更新排序下拉框
+            document.getElementById('sortField').value = currentSortField;
+            document.getElementById('sortOrder').value = currentSortOrder;
+            
+            currentPage = 1;
+            loadKeys();
+        }
+
+        // 更改页码
+        function changePage(delta) {
+            const newPage = currentPage + delta;
+            if (newPage >= 1 && newPage <= totalPages) {
+                currentPage = newPage;
+                loadKeys();
+            }
+        }
+
+        // 切换密钥可见性
+        function toggleKeyVisibility(element, fullKey) {
+            const parent = element.parentElement;
+            if (element.classList.contains('masked-key')) {
+                element.innerHTML = fullKey;
+                element.classList.remove('masked-key');
+                element.classList.add('full-key');
+                element.title = "点击隐藏密钥";
+            } else {
+                const maskedKey = formatKeyDisplay(fullKey);
+                element.innerHTML = maskedKey;
+                element.classList.remove('full-key');
+                element.classList.add('masked-key');
+                element.title = "点击显示完整密钥";
+            }
+        }
+
+        // 复制功能
+        function copyToClipboard(text, event) {
+            event.stopPropagation(); // 阻止事件冒泡
+            
+            // 创建一个临时的文本区域元素
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed'; // 避免滚动到底部
+            document.body.appendChild(textarea);
+            textarea.select();
+            
+            try {
+                // 执行复制命令
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    showMessage("密钥已复制到剪贴板", "success");
+                } else {
+                    showMessage("复制失败，请手动复制", "error");
+                }
+            } catch (err) {
+                showMessage("复制失败: " + err, "error");
+                console.error('复制失败:', err);
+            }
+            
+            // 移除临时元素
+            document.body.removeChild(textarea);
+        }
+    </script>
+</body>
+
+</html>
