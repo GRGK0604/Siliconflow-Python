@@ -589,144 +589,6 @@
                 display: none;
             }
         }
-
-        /* 模态框样式 */
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.5);
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .modal-content {
-            background-color: var(--bg-primary);
-            border-radius: var(--radius-lg);
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-            max-width: 500px;
-            width: 90%;
-            color: var(--text-primary);
-            animation: modalFadeIn 0.3s;
-        }
-        
-        @keyframes modalFadeIn {
-            from { opacity: 0; transform: translateY(-20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: var(--spacing-lg);
-            border-bottom: 1px solid var(--border-color);
-        }
-        
-        .modal-header h3 {
-            margin: 0;
-            font-size: 1.25rem;
-        }
-        
-        .modal-body {
-            padding: var(--spacing-lg);
-        }
-        
-        .close {
-            font-size: 1.5rem;
-            cursor: pointer;
-            color: var(--text-secondary);
-        }
-        
-        .close:hover {
-            color: var(--accent-primary);
-        }
-        
-        .form-group {
-            margin-bottom: var(--spacing-lg);
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: var(--spacing-sm);
-            font-weight: 500;
-        }
-        
-        .form-group small {
-            display: block;
-            color: var(--text-secondary);
-            margin-top: var(--spacing-xs);
-            font-size: 0.875rem;
-        }
-        
-        .form-control {
-            width: 100%;
-            padding: var(--spacing-md);
-            border: 1px solid var(--border-color);
-            border-radius: var(--radius-sm);
-            background-color: var(--bg-input);
-            color: var(--text-primary);
-            font-size: 1rem;
-            transition: var(--transition);
-        }
-        
-        .form-control:focus {
-            border-color: var(--accent-primary);
-            outline: none;
-            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
-        }
-        
-        /* Toggle Switch */
-        .toggle {
-            display: flex;
-            align-items: center;
-            cursor: pointer;
-        }
-        
-        .toggle input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-        
-        .slider {
-            position: relative;
-            display: inline-block;
-            width: 40px;
-            height: 20px;
-            background-color: var(--bg-secondary);
-            border-radius: 20px;
-            transition: var(--transition);
-            margin-right: var(--spacing-md);
-        }
-        
-        .slider:before {
-            position: absolute;
-            content: "";
-            height: 16px;
-            width: 16px;
-            left: 2px;
-            bottom: 2px;
-            background-color: white;
-            border-radius: 50%;
-            transition: var(--transition);
-        }
-        
-        input:checked + .slider {
-            background-color: var(--accent-primary);
-        }
-        
-        input:checked + .slider:before {
-            transform: translateX(20px);
-        }
-        
-        .toggle-label {
-            font-weight: 500;
-        }
     </style>
 </head>
 
@@ -877,59 +739,6 @@
                         </svg>
                         清空日志
                     </button>
-                    <button class="btn-secondary" onclick="showLogCleanupConfig()">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M12 20h9"></path>
-                            <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
-                        </svg>
-                        日志清理配置
-                    </button>
-                </div>
-                
-                <!-- 日志自动清理配置模态框 -->
-                <div id="logCleanupModal" class="modal">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h3>日志自动清理配置</h3>
-                            <span class="close" onclick="closeLogCleanupModal()">&times;</span>
-                        </div>
-                        <div class="modal-body">
-                            <div class="form-group">
-                                <label class="toggle">
-                                    <input type="checkbox" id="logCleanupEnabled">
-                                    <span class="slider"></span>
-                                    <span class="toggle-label">启用自动清理</span>
-                                </label>
-                            </div>
-                            <div class="form-group">
-                                <label for="logRetentionDays">日志保留天数:</label>
-                                <input type="number" id="logRetentionDays" min="1" value="30" class="form-control">
-                                <small>日志将在指定天数后自动删除</small>
-                            </div>
-                            <div class="form-group">
-                                <label for="logCleanupInterval">清理间隔(小时):</label>
-                                <input type="number" id="logCleanupInterval" min="1" value="24" class="form-control">
-                                <small>系统将按此间隔自动执行清理任务</small>
-                            </div>
-                            <div class="form-group">
-                                <label class="toggle">
-                                    <input type="checkbox" id="logBackupEnabled">
-                                    <span class="slider"></span>
-                                    <span class="toggle-label">启用日志备份</span>
-                                </label>
-                                <small style="margin-left: 48px;">启用后，在清理前会将要删除的日志备份为CSV文件</small>
-                            </div>
-                            <div class="form-group" id="backupDirGroup" style="display: none;">
-                                <label for="logBackupDir">备份目录:</label>
-                                <input type="text" id="logBackupDir" value="log_backups" class="form-control">
-                                <small>日志备份文件将保存到此目录</small>
-                            </div>
-                            <div class="button-group">
-                                <button class="btn-primary" onclick="saveLogCleanupConfig()">保存配置</button>
-                                <button class="btn-secondary" onclick="closeLogCleanupModal()">取消</button>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </section>
         </div>
@@ -980,7 +789,7 @@
             const data = await response.json();
             document.getElementById("keyCount").textContent = Math.floor(data.key_count || 0);
             document.getElementById("totalBalance").textContent = `¥${parseFloat(data.total_balance || 0).toFixed(2)}`;
-            document.getElementById("totalCalls").textContent = Math.floor(data.total_usage || 0);
+            document.getElementById("totalCalls").textContent = Math.floor(data.total_calls || 0);
             document.getElementById("totalTokens").textContent = Math.floor(data.total_tokens || 0);
         }
         
@@ -1007,56 +816,10 @@
             messageEl.className = "success";
             messageEl.style.display = 'block';
             
-            try {
-                const response = await fetch("/refresh", { 
-                    method: "POST",
-                    headers: {
-                        'Accept': 'application/json'
-                    }
-                });
-                
-                // 检查HTTP状态
-                if (!response.ok) {
-                    let errorMsg = `服务器错误 (${response.status})`;
-                    try {
-                        // 尝试解析错误响应
-                        const errorData = await response.json();
-                        if (errorData && errorData.message) {
-                            errorMsg = errorData.message;
-                        } else if (errorData && errorData.detail) {
-                            errorMsg = errorData.detail;
-                        }
-                    } catch (parseError) {
-                        // 如果无法解析JSON，尝试获取文本
-                        try {
-                            const errorText = await response.text();
-                            // 只取文本的前100个字符避免过长
-                            errorMsg = errorText.substring(0, 100);
-                            if (errorText.length > 100) errorMsg += '...';
-                        } catch (textError) {
-                            // 如果连文本都无法获取，使用通用错误消息
-                            errorMsg = `请求失败 (HTTP ${response.status})`;
-                        }
-                    }
-                    throw new Error(errorMsg);
-                }
-                
-                // 解析成功的响应
-                const data = await response.json();
-                const successMsg = data.message || '刷新完成';
-                
-                // 显示结果消息，包括成功和跳过的数量
-                messageEl.innerHTML = `${successMsg}<br><small>刷新完成时间: ${new Date().toLocaleTimeString()}</small>`;
-                messageEl.className = "success";
-                
-                // 更新统计信息
-                fetchStats();
-            } catch (error) {
-                // 显示错误消息
-                messageEl.textContent = `刷新失败: ${error.message}`;
-                messageEl.className = "error";
-                console.error("刷新密钥时出错:", error);
-            }
+            const response = await fetch("/refresh", { method: "POST" });
+            const data = await response.json();
+            messageEl.textContent = data.message;
+            fetchStats();
         }
         
         function exportKeys() {
@@ -1097,7 +860,7 @@
                 const tbody = document.querySelector("#logsTable tbody");
                 tbody.innerHTML = "";
                 
-                if (!data || !data.items || !Array.isArray(data.items) || data.items.length === 0) {
+                if (data.logs.length === 0) {
                     tbody.innerHTML = `
                         <tr>
                             <td colspan="6" style="text-align: center;">暂无日志记录</td>
@@ -1106,25 +869,20 @@
                     return;
                 }
                 
-                data.items.forEach(log => {
+                data.logs.forEach(log => {
                     const date = new Date(log.call_time * 1000);
                     const formattedDate = isMobile ? 
                         `${String(date.getMonth()+1).padStart(2,'0')}/${String(date.getDate()).padStart(2,'0')} ${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}` 
                         : date.toLocaleString('zh-CN');
                     
-                    let keyDisplay = 'N/A';
-                    if (log.used_key && typeof log.used_key === 'string' && log.used_key.length >= 8) {
-                        keyDisplay = `${log.used_key.substring(0, 4)}...${log.used_key.substring(log.used_key.length - 4)}`;
-                    }
-                    
                     const tr = document.createElement("tr");
                     tr.innerHTML = `
-                        <td class="key-column">${keyDisplay}</td>
+                        <td class="key-column">${log.api_key.substring(0, 6)}...${log.api_key.substring(log.api_key.length - 3)}</td>
                         <td>${log.model || 'N/A'}</td>
                         <td>${formattedDate}</td>
-                        <td>${log.input_tokens || 0}</td>
-                        <td>${log.output_tokens || 0}</td>
-                        <td>${log.total_tokens || 0}</td>
+                        <td>${log.input_tokens}</td>
+                        <td>${log.output_tokens}</td>
+                        <td>${log.total_tokens}</td>
                     `;
                     tbody.appendChild(tr);
                 });
@@ -1132,34 +890,29 @@
                 // 更新分页按钮
                 const paginationDiv = document.getElementById("pagination");
                 paginationDiv.innerHTML = "";
-                
-                // 确保分页数据存在
-                const totalItems = data.total || 0;
-                const pageSize = data.page_size || 50;
-                const currentPageNum = data.page || 1;
-                const totalPages = Math.ceil(totalItems / pageSize);
+                const totalPages = Math.ceil(data.total / data.page_size);
                 
                 if (totalPages > 1) {
                     // 添加页码信息
                     const pageInfo = document.createElement("div");
                     pageInfo.className = "pagination-info";
-                    pageInfo.textContent = `第 ${currentPageNum} 页，共 ${totalPages} 页`;
+                    pageInfo.textContent = `第 ${data.page} 页，共 ${totalPages} 页`;
                     paginationDiv.appendChild(pageInfo);
                     
                     // 使用上一页/下一页按钮
                     const prevBtn = document.createElement("button");
                     prevBtn.innerHTML = "&#10094; 上一页";
                     prevBtn.className = "btn-secondary";
-                    prevBtn.disabled = currentPageNum === 1;
-                    prevBtn.onclick = () => fetchLogs(currentPageNum - 1);
+                    prevBtn.disabled = data.page === 1;
+                    prevBtn.onclick = () => fetchLogs(data.page - 1);
                     paginationDiv.appendChild(prevBtn);
                     
                     // 下一页按钮
                     const nextBtn = document.createElement("button");
                     nextBtn.innerHTML = "下一页 &#10095;";
                     nextBtn.className = "btn-secondary";
-                    nextBtn.disabled = currentPageNum === totalPages;
-                    nextBtn.onclick = () => fetchLogs(currentPageNum + 1);
+                    nextBtn.disabled = data.page === totalPages;
+                    nextBtn.onclick = () => fetchLogs(data.page + 1);
                     paginationDiv.appendChild(nextBtn);
                 }
             } catch (error) {
@@ -1169,8 +922,6 @@
                         <td colspan="6" style="text-align: center;">加载日志失败: ${error.message}</td>
                     </tr>
                 `;
-                // 清空分页
-                document.getElementById("pagination").innerHTML = "";
             }
         }
         
@@ -1181,81 +932,6 @@
             showMessage(data.message);
             fetchLogs(1);
             fetchStats();
-        }
-        
-        // 日志自动清理配置相关函数
-        function showLogCleanupModal() {
-            document.getElementById('logCleanupModal').style.display = 'flex';
-        }
-        
-        function closeLogCleanupModal() {
-            document.getElementById('logCleanupModal').style.display = 'none';
-        }
-        
-        function toggleBackupDirGroup() {
-            const backupEnabled = document.getElementById('logBackupEnabled').checked;
-            document.getElementById('backupDirGroup').style.display = backupEnabled ? 'block' : 'none';
-        }
-        
-        function showLogCleanupConfig() {
-            // 获取当前配置
-            fetch('/log_cleanup_config')
-                .then(response => response.json())
-                .then(data => {
-                    document.getElementById('logCleanupEnabled').checked = data.enabled;
-                    document.getElementById('logRetentionDays').value = data.retention_days;
-                    document.getElementById('logCleanupInterval').value = data.interval_hours;
-                    
-                    // 设置备份选项
-                    if (data.backup_enabled !== undefined) {
-                        document.getElementById('logBackupEnabled').checked = data.backup_enabled;
-                    }
-                    
-                    if (data.backup_dir !== undefined) {
-                        document.getElementById('logBackupDir').value = data.backup_dir;
-                    }
-                    
-                    // 显示/隐藏备份目录输入框
-                    toggleBackupDirGroup();
-                    showLogCleanupModal();
-                })
-                .catch(error => {
-                    showMessage('获取配置失败: ' + error.message, 'error');
-                });
-                
-            // 添加备份选项切换事件
-            document.getElementById('logBackupEnabled').addEventListener('change', toggleBackupDirGroup);
-        }
-        
-        async function saveLogCleanupConfig() {
-            const config = {
-                enabled: document.getElementById('logCleanupEnabled').checked,
-                retention_days: parseInt(document.getElementById('logRetentionDays').value),
-                interval_hours: parseInt(document.getElementById('logCleanupInterval').value),
-                backup_enabled: document.getElementById('logBackupEnabled').checked,
-                backup_dir: document.getElementById('logBackupDir').value
-            };
-            
-            try {
-                const response = await fetch('/log_cleanup_config', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(config)
-                });
-                
-                const result = await response.json();
-                
-                if (response.ok) {
-                    showMessage(result.message);
-                    closeLogCleanupModal();
-                } else {
-                    showMessage(result.detail || '保存失败', 'error');
-                }
-            } catch (error) {
-                showMessage('保存配置失败: ' + error.message, 'error');
-            }
         }
         
         // 监听窗口大小变化
