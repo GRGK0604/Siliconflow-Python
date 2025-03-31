@@ -6,700 +6,184 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>硅基 KEY 池 - 密钥管理</title>
     <link rel="icon" type="image/x-icon" href="/static/logo.png">
+    <!-- 预加载字体 -->
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <style type="text/css">
+        /* 使用系统字体回退，减少外部字体依赖 */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+        }
+        /* 只保留必要的字体，设置font-display为swap确保文本可见 */
+        @font-face {
+            font-family: 'Inter';
+            font-style: normal;
+            font-weight: 400;
+            src: local('Inter Regular'), local('Inter-Regular'), 
+                 url(/cf-fonts/v/inter/5.0.16/latin/wght/normal.woff2) format('woff2');
+            font-display: swap;
+        }
+        @font-face {
+            font-family: 'Inter';
+            font-style: normal;
+            font-weight: 600;
+            src: local('Inter SemiBold'), local('Inter-SemiBold'), 
+                 url(/cf-fonts/v/inter/5.0.16/latin/wght/normal.woff2) format('woff2');
+            font-display: swap;
+        }
+    </style>
     <style>
         :root {
-            /* Light theme colors */
-            --bg-primary: #f8fafc;
-            --bg-secondary: #ffffff;
-            --text-primary: #1e293b;
-            --text-secondary: #64748b;
-            --border-color: #e2e8f0;
-            --accent-primary: #3b82f6;
-            --accent-secondary: #8b5cf6;
-            --accent-primary-hover: #2563eb;
-            --accent-primary-light: rgba(59, 130, 246, 0.1);
-            --success-color: #10b981;
-            --danger-color: #ef4444;
-            --warning-color: #f59e0b;
-            --success-bg: rgba(16, 185, 129, 0.1);
-            --danger-bg: rgba(239, 68, 68, 0.1);
-            --warning-bg: rgba(245, 158, 11, 0.1);
-            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-            --header-bg: var(--bg-secondary);
-            --table-header-bg: rgba(59, 130, 246, 0.05);
-            --table-row-hover: rgba(59, 130, 246, 0.03);
+            --primary: #6B46C1;
+            --primary-hover: #553C9A;
+            --secondary: #64748B;
+            --success: #10B981;
+            --danger: #EF4444;
+            --warning: #F59E0B;
+            --bg-light: #F8FAFC;
+            --bg-white: #FFFFFF;
+            --text-dark: #1F2937;
+            --text-muted: #64748B;
+            --border: #E2E8F0;
+            --shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+            --card-border: #E2E8F0;
+            --progress-bg: #E2E8F0;
+            --status-active-bg: rgba(16, 185, 129, 0.1);
+            --status-expired-bg: rgba(239, 68, 68, 0.1);
+            --progress-fill-success: #10B981;
+            --progress-fill-warning: #F59E0B;
+            --progress-fill-danger: #EF4444;
         }
 
+        /* Dark theme variables */
         [data-theme="dark"] {
-            /* Dark theme colors */
-            --bg-primary: #111827;
-            --bg-secondary: #1f2937;
-            --text-primary: #f3f4f6;
-            --text-secondary: #9ca3af;
-            --border-color: #374151;
-            --accent-primary: #3b82f6;
-            --accent-secondary: #8b5cf6;
-            --accent-primary-hover: #60a5fa;
-            --accent-primary-light: rgba(59, 130, 246, 0.2);
-            --success-color: #10b981;
-            --danger-color: #ef4444;
-            --warning-color: #f59e0b;
-            --success-bg: rgba(16, 185, 129, 0.2);
-            --danger-bg: rgba(239, 68, 68, 0.2);
-            --warning-bg: rgba(245, 158, 11, 0.2);
-            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
-            --header-bg: var(--bg-secondary);
-            --table-header-bg: rgba(59, 130, 246, 0.1);
-            --table-row-hover: rgba(59, 130, 246, 0.05);
+            --primary: #8B5CF6;
+            --primary-hover: #7C3AED;
+            --secondary: #94A3B8;
+            --success: #10B981;
+            --danger: #EF4444;
+            --warning: #F59E0B;
+            --bg-light: #1E293B;
+            --bg-white: #0F172A;
+            --text-dark: #F1F5F9;
+            --text-muted: #94A3B8;
+            --border: #334155;
+            --shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+            --card-border: #334155;
+            --progress-bg: #334155;
+            --status-active-bg: rgba(16, 185, 129, 0.2);
+            --status-expired-bg: rgba(239, 68, 68, 0.2);
+            --progress-fill-success: #10B981;
+            --progress-fill-warning: #F59E0B;
+            --progress-fill-danger: #EF4444;
         }
 
-        /* Common variables */
-        :root, [data-theme="light"], [data-theme="dark"] {
-            --radius-sm: 0.375rem;
-            --radius-md: 0.5rem;
-            --radius-lg: 0.75rem;
-            --transition: all 0.2s ease;
-            --spacing-xs: 0.25rem;
-            --spacing-sm: 0.5rem;
-            --spacing-md: 1rem;
-            --spacing-lg: 1.5rem;
-            --spacing-xl: 2rem;
-            --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg-light); color: var(--text-dark); line-height: 1.6; min-height: 100vh; }
+        .container { max-width: 1280px; margin: 0 auto; padding: 0 1rem; }
+        .card { background: var(--bg-white); border-radius: 0.75rem; box-shadow: var(--shadow); padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid var(--card-border); }
+        
+        /* Modern UI elements */
+        .header { background: var(--bg-white); padding: 1rem 0; border-bottom: 1px solid var(--border); }
+        .header-content { display: flex; justify-content: space-between; align-items: center; }
+        .header-title { display: flex; align-items: center; gap: 0.75rem; }
+        .logo { width: 2rem; height: 2rem; }
+        .app-title { font-size: 1.25rem; font-weight: 600; color: var(--primary); }
+        
+        .nav-actions { display: flex; align-items: center; gap: 1rem; }
+        .theme-toggle { background: transparent; border: none; cursor: pointer; color: var(--text-muted); }
+        .nav-links { display: flex; gap: 0.5rem; background: var(--bg-light); padding: 0.25rem; border-radius: 0.5rem; }
+        .nav-link { color: var(--text-muted); text-decoration: none; padding: 0.5rem 1rem; border-radius: 0.375rem; transition: all 0.2s; }
+        .nav-link:hover, .logout-btn:hover { background: rgba(107, 70, 193, 0.1); color: var(--primary); }
+        .nav-link.active { color: var(--primary); background: rgba(107, 70, 193, 0.1); font-weight: 500; }
+        .logout-btn { color: var(--danger); text-decoration: none; padding: 0.5rem 1rem; border-radius: 0.375rem; transition: all 0.2s; }
+        
+        .main-content { padding: 2rem 0; }
+        .section { margin-bottom: 2rem; }
+        .section-title { font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; }
+        
+        .button-group { display: flex; gap: 0.75rem; margin-bottom: 1.5rem; }
+        button, .btn-primary, .btn-secondary, .btn-danger { 
+            display: flex; align-items: center; gap: 0.5rem; font-weight: 500; padding: 0.625rem 1.25rem; 
+            border-radius: 0.5rem; border: none; cursor: pointer; transition: all 0.2s;
         }
-
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        html {
-            font-size: 16px;
-            scroll-behavior: smooth;
-        }
-
-        body {
-            font-family: var(--font-sans);
-            background-color: var(--bg-primary);
-            color: var(--text-primary);
-            line-height: 1.5;
-            min-height: 100vh;
-            transition: background-color 0.3s ease, color 0.3s ease;
-        }
-
-        /* Header and navigation */
-        .header {
-            background-color: var(--header-bg);
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-            position: sticky;
-            top: 0;
-            z-index: 10;
-            padding: var(--spacing-md);
-            transition: var(--transition);
-        }
-
-        .container {
-            width: 100%;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 0 var(--spacing-md);
-        }
-
-        .header-content {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            width: 100%;
-        }
-
-        .header-title {
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-sm);
-        }
-
-        .logo {
-            width: 2rem;
-            height: 2rem;
-        }
-
-        .app-title {
-            font-size: 1.25rem;
-            font-weight: 600;
-            color: var(--accent-primary);
-        }
-
-        .nav-actions {
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-md);
-        }
-
-        .theme-toggle {
-            background: transparent;
-            border: none;
-            cursor: pointer;
-            color: var(--text-secondary);
-            font-size: 1.25rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: var(--spacing-xs);
-            border-radius: 50%;
-            width: 2.5rem;
-            height: 2.5rem;
-            transition: var(--transition);
-        }
-
-        .theme-toggle:hover {
-            background-color: var(--accent-primary-light);
-            color: var(--accent-primary);
-        }
-
-        .nav-links {
-            display: flex;
-            gap: var(--spacing-sm);
-            background-color: var(--bg-secondary);
-            padding: var(--spacing-xs);
-            border-radius: var(--radius-md);
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-        }
-
-        .nav-link {
-            color: var(--text-secondary);
-            text-decoration: none;
-            padding: var(--spacing-sm) var(--spacing-md);
-            border-radius: var(--radius-sm);
-            transition: var(--transition);
-            font-size: 0.875rem;
-            font-weight: 500;
-        }
-
-        .nav-link:hover {
-            color: var(--accent-primary);
-            background-color: var(--accent-primary-light);
-        }
-
-        .nav-link.active {
-            color: var(--accent-primary);
-            background-color: var(--accent-primary-light);
-            font-weight: 600;
-        }
-
-        .logout-btn {
-            color: var(--danger-color);
-            text-decoration: none;
-            padding: var(--spacing-sm) var(--spacing-md);
-            border-radius: var(--radius-sm);
-            transition: var(--transition);
-            font-size: 0.875rem;
-            font-weight: 500;
-        }
-
-        .logout-btn:hover {
-            background-color: var(--danger-bg);
-        }
-
-        /* Main content */
-        .main-content {
-            padding: var(--spacing-xl) 0;
-        }
-
-        .section {
-            margin-bottom: var(--spacing-xl);
-        }
-
-        .section-title {
-            font-size: 1.25rem;
-            font-weight: 600;
-            margin-bottom: var(--spacing-lg);
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-sm);
-        }
-
-        /* Cards */
-        .card {
-            background-color: var(--bg-secondary);
-            border-radius: var(--radius-lg);
-            box-shadow: var(--card-shadow);
-            padding: var(--spacing-lg);
-            margin-bottom: var(--spacing-lg);
-            border: 1px solid var(--border-color);
-            transition: var(--transition);
-        }
-
-        .card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-        }
-
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-hover); }
+        .btn-secondary { background: var(--bg-white); color: var(--primary); border: 1px solid var(--border); }
+        .btn-secondary:hover { border-color: var(--primary); background: rgba(107, 70, 193, 0.05); }
+        .btn-danger { background: var(--bg-white); color: var(--danger); border: 1px solid var(--border); }
+        .btn-danger:hover { border-color: var(--danger); background: rgba(239, 68, 68, 0.05); }
+        
         /* Stats grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: var(--spacing-md);
-            margin-bottom: var(--spacing-xl);
-        }
-
-        .stat-card {
-            background-color: var(--bg-secondary);
-            padding: var(--spacing-md);
-            border-radius: var(--radius-md);
-            box-shadow: var(--card-shadow);
-            border: 1px solid var(--border-color);
-            transition: var(--transition);
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-md);
-        }
+        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
+        .stat-card { background: var(--bg-white); padding: 1.25rem; border-radius: 0.75rem; box-shadow: var(--shadow); 
+                    border: 1px solid var(--border); display: flex; align-items: center; gap: 1rem; }
+        .stat-icon { width: 3rem; height: 3rem; display: flex; align-items: center; justify-content: center; 
+                    border-radius: 0.75rem; flex-shrink: 0; }
+        .stat-icon-users { background: rgba(147, 51, 234, 0.15); color: #9333ea; }
+        .stat-icon-active { background: rgba(22, 163, 74, 0.15); color: #16a34a; }
+        .stat-icon-calls { background: rgba(234, 88, 12, 0.15); color: #ea580c; }
+        .stat-icon-tokens { background: rgba(2, 132, 199, 0.15); color: #0284c7; }
+        .stat-content { display: flex; flex-direction: column; }
+        .stat-label { color: var(--text-muted); font-size: 0.875rem; }
+        .stat-value { font-weight: 700; font-size: 1.5rem; line-height: 1.2; }
         
-        .stat-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-        }
-
-        .stat-icon {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 3rem;
-            height: 3rem;
-            border-radius: var(--radius-md);
-            flex-shrink: 0;
-            font-size: 1.25rem;
-        }
-
-        .stat-icon-users {
-            background-color: rgba(147, 51, 234, 0.15);
-            color: #9333ea;
-        }
-
-        .stat-icon-active {
-            background-color: rgba(22, 163, 74, 0.15);
-            color: #16a34a;
-        }
-
-        .stat-icon-calls {
-            background-color: rgba(234, 88, 12, 0.15);
-            color: #ea580c;
-        }
-
-        .stat-icon-tokens {
-            background-color: rgba(2, 132, 199, 0.15);
-            color: #0284c7;
-        }
+        /* Search and filters */
+        .filter-container { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem; 
+                         background: var(--bg-white); padding: 1rem; border-radius: 0.75rem; 
+                         border: 1px solid var(--border); box-shadow: var(--shadow); }
+        .filter-group { display: flex; align-items: center; gap: 0.5rem; }
+        .filter-label { color: var(--text-muted); font-size: 0.875rem; white-space: nowrap; }
+        .filter-input { padding: 0.5rem; background: var(--bg-light); color: var(--text-dark); 
+                      border: 1px solid var(--border); border-radius: 0.375rem; font-size: 0.875rem; }
+        .filter-input:focus { outline: none; border-color: var(--primary); }
         
-        .stat-content {
-            display: flex;
-            flex-direction: column;
-        }
-        
-        .stat-label {
-            color: var(--text-secondary);
-            font-size: 0.875rem;
-            margin-bottom: var(--spacing-xs);
-        }
-        
-        .stat-value {
-            font-weight: 700;
-            color: var(--text-primary);
-            font-size: 1.5rem;
-            line-height: 1.2;
-        }
-
-        /* Button styles */
-        .button-group {
-            display: flex;
-            gap: var(--spacing-sm);
-            margin-bottom: var(--spacing-lg);
-            flex-wrap: wrap;
-        }
-
-        button {
-            padding: var(--spacing-sm) var(--spacing-lg);
-            border: none;
-            border-radius: var(--radius-md);
-            font-weight: 500;
-            cursor: pointer;
-            transition: var(--transition);
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-sm);
-            font-size: 0.875rem;
-        }
-
-        button:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
-
-        button:active {
-            transform: translateY(0);
-        }
-
-        .btn-primary {
-            background-color: var(--accent-primary);
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background-color: var(--accent-primary-hover);
-        }
-
-        .btn-secondary {
-            background-color: var(--bg-secondary);
-            color: var(--accent-primary);
-            border: 1px solid var(--accent-primary);
-        }
-
-        .btn-secondary:hover {
-            background-color: var(--accent-primary-light);
-        }
-
-        .btn-danger {
-            background-color: var(--bg-secondary);
-            color: var(--danger-color);
-            border: 1px solid var(--danger-color);
-        }
-
-        .btn-danger:hover {
-            background-color: var(--danger-bg);
-        }
-
-        /* Message styles */
-        #message {
-            padding: var(--spacing-md);
-            border-radius: var(--radius-md);
-            margin-bottom: var(--spacing-lg);
-            display: none;
-            font-size: 0.875rem;
-            animation: fadeIn 0.3s ease;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        #message.success {
-            background-color: var(--success-bg);
-            color: var(--success-color);
-            border: 1px solid rgba(16, 185, 129, 0.2);
-            display: block !important;
-        }
-
-        #message.error {
-            background-color: var(--danger-bg);
-            color: var(--danger-color);
-            border: 1px solid rgba(239, 68, 68, 0.2);
-            display: block !important;
-        }
-
-        /* Filter styles */
-        .filter-container {
-            display: flex;
-            flex-wrap: wrap;
-            gap: var(--spacing-md);
-            margin-bottom: var(--spacing-lg);
-            background-color: var(--bg-secondary);
-            padding: var(--spacing-lg);
-            border-radius: var(--radius-md);
-            border: 1px solid var(--border-color);
-            box-shadow: var(--card-shadow);
-        }
-
-        .filter-group {
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-sm);
-            flex: 1 1 auto;
-        }
-
-        .filter-label {
-            color: var(--text-secondary);
-            font-size: 0.875rem;
-            white-space: nowrap;
-            font-weight: 500;
-        }
-
-        .filter-input {
-            padding: var(--spacing-sm);
-            background-color: var(--bg-primary);
-            color: var(--text-primary);
-            border: 1px solid var(--border-color);
-            border-radius: var(--radius-sm);
-            font-size: 0.875rem;
-            flex: 1;
-            transition: var(--transition);
-        }
-
-        .filter-input:focus {
-            outline: none;
-            border-color: var(--accent-primary);
-            box-shadow: 0 0 0 2px var(--accent-primary-light);
-        }
-
         /* Table styles */
-        .table-container {
-            overflow-x: auto;
-            margin-bottom: var(--spacing-lg);
-            background-color: var(--bg-secondary);
-            border-radius: var(--radius-md);
-            box-shadow: var(--card-shadow);
-            border: 1px solid var(--border-color);
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        th, td {
-            padding: var(--spacing-md);
-            text-align: left;
-            border-bottom: 1px solid var(--border-color);
-            font-size: 0.875rem;
-        }
-
-        th {
-            background-color: var(--table-header-bg);
-            font-weight: 600;
-            color: var(--text-primary);
-            cursor: pointer;
-            user-select: none;
-            white-space: nowrap;
-            position: relative;
-        }
-
-        th:hover {
-            background-color: var(--accent-primary-light);
-        }
-
-        tr:last-child td {
-            border-bottom: none;
-        }
-
-        tr:hover td {
-            background-color: var(--table-row-hover);
-        }
-
-        /* Key actions */
-        .key-actions {
-            display: flex;
-            gap: var(--spacing-sm);
-            flex-wrap: wrap;
-        }
-
-        .action-btn {
-            padding: var(--spacing-xs) var(--spacing-sm);
-            border-radius: var(--radius-sm);
-            font-size: 0.8rem;
-            cursor: pointer;
-            transition: var(--transition);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: var(--spacing-xs);
-        }
-
-        .refresh-btn {
-            background-color: var(--bg-secondary);
-            color: var(--accent-primary);
-            border: 1px solid var(--accent-primary);
-        }
-
-        .refresh-btn:hover {
-            background-color: var(--accent-primary-light);
-            transform: translateY(-1px);
-        }
-
+        .table-container { overflow-x: auto; background: var(--bg-white); border-radius: 0.75rem; 
+                         box-shadow: var(--shadow); border: 1px solid var(--border); margin-bottom: 1.5rem; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 1rem; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.875rem; }
+        th { font-weight: 600; background: rgba(107, 70, 193, 0.05); position: relative; }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: rgba(107, 70, 193, 0.02); }
+        
+        /* Messages */
+        #message { padding: 1rem; border-radius: 0.5rem; margin-bottom: 1.5rem; display: none; font-size: 0.875rem; }
+        .success { background: var(--status-active-bg); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.2); display: block !important; }
+        .error { background: var(--status-expired-bg); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.2); display: block !important; }
+        
         /* Pagination */
-        .pagination-container {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: var(--spacing-md);
-            margin-bottom: var(--spacing-xl);
-        }
-
-        .pagination {
-            display: flex;
-            gap: var(--spacing-sm);
-        }
-
-        .pagination button {
-            min-width: 5rem;
-            background-color: var(--bg-secondary);
-            border: 1px solid var(--border-color);
-        }
-
-        .pagination button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            box-shadow: none;
-            transform: none;
-        }
-
-        .pagination-info {
-            color: var(--text-secondary);
-            font-size: 0.875rem;
-        }
-
-        /* Key display */
-        .key-display {
-            display: flex;
-            align-items: center;
-            gap: var(--spacing-sm);
-        }
-
-        .masked-key {
-            cursor: pointer;
-            font-family: monospace;
-            font-size: 0.875rem;
-            word-break: keep-all;
-            white-space: nowrap;
-            transition: var(--transition);
-        }
-
-        .full-key {
-            font-family: monospace;
-            font-size: 0.875rem;
-            word-break: break-all;
-        }
-
-        .copy-btn {
-            background: none;
-            border: none;
-            color: var(--text-secondary);
-            cursor: pointer;
-            padding: var(--spacing-xs);
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: var(--radius-sm);
-            transition: var(--transition);
-        }
-
-        .copy-btn:hover {
-            background-color: var(--accent-primary-light);
-            color: var(--accent-primary);
-            transform: none;
-        }
-
-        /* Responsive styles */
+        .pagination-container { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
+        .pagination { display: flex; gap: 0.5rem; }
+        .pagination button { min-width: 5rem; }
+        .pagination button:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        /* Responsive */
         @media (max-width: 992px) {
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-            
-            .filter-container {
-                flex-direction: column;
-                padding: var(--spacing-md);
-            }
-            
-            .filter-group {
-                width: 100%;
-            }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
         }
-
         @media (max-width: 768px) {
-            .header-content {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: var(--spacing-md);
-            }
-            
-            .nav-links {
-                width: 100%;
-                justify-content: space-around;
-            }
-            
-            .nav-link, .logout-btn {
-                padding: var(--spacing-xs) var(--spacing-sm);
-                font-size: 0.8rem;
-            }
-            
-            .button-group {
-                flex-wrap: wrap;
-            }
-            
-            .button-group button {
-                flex: 1 1 calc(50% - var(--spacing-sm));
-                justify-content: center;
-            }
-            
-            .key-display {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-
-            .copy-btn {
-                align-self: flex-end;
-                margin-top: -1.5rem;
-            }
-            
-            .key-actions {
-                flex-direction: column;
-                gap: var(--spacing-md);
-            }
-            
-            .key-status {
-                width: 100%;
-                justify-content: space-between;
-            }
-            
-            th, td {
-                padding: var(--spacing-sm);
-                font-size: 0.8rem;
-            }
+            .header-content { flex-direction: column; align-items: flex-start; gap: 1rem; }
+            .nav-links { width: 100%; justify-content: space-around; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 0.75rem; }
+            .filter-container { flex-direction: column; align-items: stretch; }
+            .button-group { flex-wrap: wrap; }
+            .button-group button { flex: 1 1 calc(50% - 0.5rem); }
+            .hide-on-mobile { display: none; }
         }
-
         @media (max-width: 576px) {
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .header-title {
-                width: 100%;
-                justify-content: space-between;
-            }
-            
-            .button-group button {
-                flex: 1 1 100%;
-            }
-            
-            .button-group {
-                flex-direction: column;
-            }
-            
-            .key-actions {
-                flex-direction: column;
-            }
-            
-            .action-btn {
-                width: 100%;
-                padding: var(--spacing-sm);
-            }
-            
-            .pagination-container {
-                flex-direction: column;
-                align-items: stretch;
-            }
-            
-            .pagination {
-                justify-content: center;
-            }
-            
-            .pagination button {
-                flex: 1;
-            }
-            
-            .hide-on-mobile {
-                display: none;
-            }
+            .stats-grid { grid-template-columns: 1fr; }
+            .button-group button { flex: 1 1 100%; }
         }
+        
+        /* Custom elements */
+        .key-display { display: flex; align-items: center; gap: 0.5rem; }
+        .masked-key, .full-key { cursor: pointer; font-family: monospace; }
+        .copy-btn { background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 0.25rem; border-radius: 0.25rem; }
+        .copy-btn:hover { background: rgba(107, 70, 193, 0.1); color: var(--primary); }
+        .key-actions { display: flex; gap: 0.5rem; }
+        .action-btn { font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 0.25rem; }
+        .refresh-btn { background: rgba(107, 70, 193, 0.1); color: var(--primary); border: none; }
+        .refresh-btn:hover { background: rgba(107, 70, 193, 0.2); }
     </style>
 </head>
 
@@ -886,8 +370,10 @@
             const iconContainer = document.getElementById('themeToggle');
             if (theme === 'dark') {
                 iconContainer.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"></path></svg>`;
+                iconContainer.title = "切换到明亮模式";
             } else {
                 iconContainer.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg>`;
+                iconContainer.title = "切换到黑暗模式";
             }
         }
         
@@ -978,6 +464,10 @@
                 let url = `/api/keys?page=${currentPage}&sort_field=${currentSortField}&sort_order=${currentSortOrder}`;
                 
                 const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`获取密钥失败: ${response.status}`);
+                }
+                
                 const data = await response.json();
                 
                 totalPages = Math.ceil(data.total / data.page_size);
@@ -995,7 +485,7 @@
                 }
                 
                 const filteredKeys = keyFilter ? 
-                    data.keys.filter(key => key.key.toLowerCase().includes(keyFilter)) : 
+                    data.keys.filter(key => key.key.toLowerCase().includes(keyFilter.toLowerCase())) : 
                     data.keys;
                 
                 if (filteredKeys.length === 0) {
@@ -1003,15 +493,26 @@
                     return;
                 }
                 
+                // 更新表头排序指示器
                 document.querySelectorAll('th').forEach(th => {
                     th.classList.remove('active');
-                    const field = th.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
+                    const onclickAttr = th.getAttribute('onclick');
+                    if (!onclickAttr) return;
+                    
+                    const matches = onclickAttr.match(/'([^']+)'/);
+                    if (!matches) return;
+                    
+                    const field = matches[1];
                     if (field === currentSortField) {
                         th.classList.add('active');
-                        th.textContent = th.textContent.replace(/ [↑↓]$/, '');
-                        th.textContent += currentSortField === 'key' ? '' : (currentSortOrder === 'asc' ? ' ↑' : ' ↓');
+                        const sortIndicator = currentSortOrder === 'asc' ? ' ↑' : ' ↓';
+                        const baseText = th.textContent.replace(/ [↑↓]$/, '');
+                        th.textContent = baseText + (field === 'key' ? '' : sortIndicator);
                     }
                 });
+                
+                // 使用DocumentFragment减少DOM操作
+                const fragment = document.createDocumentFragment();
                 
                 filteredKeys.forEach(key => {
                     const tr = document.createElement('tr');
@@ -1020,33 +521,70 @@
                     const maskedKey = formatKeyDisplay(key.key);
                     const formattedDate = formatDate(key.add_time);
                     
-                    tr.innerHTML = `
-                        <td>
-                            <div class="key-display">
-                                <span class="masked-key" title="点击显示完整密钥" onclick="toggleKeyVisibility(this, '${key.key}')">${maskedKey}</span>
-                                <button class="copy-btn" onclick="copyToClipboard('${key.key}', event)" title="复制密钥">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                                    </svg>
-                                </button>
-                            </div>
-                        </td>
-                        <td>¥${parseFloat(key.balance).toFixed(2)}</td>
-                        <td>${key.usage_count}</td>
-                        <td class="hide-on-mobile">${formattedDate}</td>
-                        <td>
-                            <div class="key-actions">
-                                <button class="action-btn refresh-btn" onclick="refreshKey('${key.key}')">刷新</button>
-                            </div>
-                        </td>
-                    `;
+                    // 创建密钥列
+                    const keyTd = document.createElement('td');
+                    const keyDisplay = document.createElement('div');
+                    keyDisplay.className = 'key-display';
                     
-                    tbody.appendChild(tr);
+                    const keySpan = document.createElement('span');
+                    keySpan.className = 'masked-key';
+                    keySpan.title = "点击显示完整密钥";
+                    keySpan.textContent = maskedKey;
+                    keySpan.onclick = () => toggleKeyVisibility(keySpan, key.key);
+                    
+                    const copyBtn = document.createElement('button');
+                    copyBtn.className = 'copy-btn';
+                    copyBtn.title = "复制密钥";
+                    copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>`;
+                    copyBtn.onclick = (event) => copyToClipboard(key.key, event);
+                    
+                    keyDisplay.appendChild(keySpan);
+                    keyDisplay.appendChild(copyBtn);
+                    keyTd.appendChild(keyDisplay);
+                    
+                    // 创建余额列
+                    const balanceTd = document.createElement('td');
+                    balanceTd.textContent = `¥${parseFloat(key.balance).toFixed(2)}`;
+                    
+                    // 创建使用次数列
+                    const usageTd = document.createElement('td');
+                    usageTd.textContent = key.usage_count;
+                    
+                    // 创建日期列
+                    const dateTd = document.createElement('td');
+                    dateTd.className = 'hide-on-mobile';
+                    dateTd.textContent = formattedDate;
+                    
+                    // 创建操作列
+                    const actionTd = document.createElement('td');
+                    const actionDiv = document.createElement('div');
+                    actionDiv.className = 'key-actions';
+                    
+                    const refreshBtn = document.createElement('button');
+                    refreshBtn.className = 'action-btn refresh-btn';
+                    refreshBtn.textContent = '刷新';
+                    refreshBtn.onclick = () => refreshKey(key.key);
+                    
+                    actionDiv.appendChild(refreshBtn);
+                    actionTd.appendChild(actionDiv);
+                    
+                    // 添加所有列到行
+                    tr.appendChild(keyTd);
+                    tr.appendChild(balanceTd);
+                    tr.appendChild(usageTd);
+                    tr.appendChild(dateTd);
+                    tr.appendChild(actionTd);
+                    
+                    fragment.appendChild(tr);
                 });
                 
+                tbody.appendChild(fragment);
+                
             } catch (error) {
-                showMessage(error.message, 'error');
+                showMessage(`加载密钥失败: ${error.message}`, "error");
             }
         }
 
@@ -1159,11 +697,37 @@
         // 切换密钥可见性
         function toggleKeyVisibility(element, fullKey) {
             const parent = element.parentElement;
+            
+            // 如果页面上有任何显示完整密钥的元素，先将其隐藏
+            document.querySelectorAll('.full-key').forEach(el => {
+                if (el !== element) {
+                    const key = el.getAttribute('data-key');
+                    const maskedKey = formatKeyDisplay(key);
+                    el.innerHTML = maskedKey;
+                    el.classList.remove('full-key');
+                    el.classList.add('masked-key');
+                    el.title = "点击显示完整密钥";
+                }
+            });
+            
             if (element.classList.contains('masked-key')) {
                 element.innerHTML = fullKey;
                 element.classList.remove('masked-key');
                 element.classList.add('full-key');
+                element.setAttribute('data-key', fullKey);
                 element.title = "点击隐藏密钥";
+                
+                // 设置自动隐藏定时器
+                setTimeout(() => {
+                    if (element.classList.contains('full-key')) {
+                        const key = element.getAttribute('data-key');
+                        const maskedKey = formatKeyDisplay(key);
+                        element.innerHTML = maskedKey;
+                        element.classList.remove('full-key');
+                        element.classList.add('masked-key');
+                        element.title = "点击显示完整密钥";
+                    }
+                }, 10000); // 10秒后自动隐藏
             } else {
                 const maskedKey = formatKeyDisplay(fullKey);
                 element.innerHTML = maskedKey;
@@ -1177,10 +741,29 @@
         function copyToClipboard(text, event) {
             event.stopPropagation(); // 阻止事件冒泡
             
+            // 尝试使用现代 Clipboard API
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text)
+                    .then(() => {
+                        showMessage("密钥已复制到剪贴板", "success");
+                    })
+                    .catch((err) => {
+                        console.error('复制失败:', err);
+                        fallbackCopyToClipboard(text);
+                    });
+            } else {
+                // 回退到旧方法
+                fallbackCopyToClipboard(text);
+            }
+        }
+
+        // 回退复制方法
+        function fallbackCopyToClipboard(text) {
             // 创建一个临时的文本区域元素
             const textarea = document.createElement('textarea');
             textarea.value = text;
             textarea.style.position = 'fixed'; // 避免滚动到底部
+            textarea.style.opacity = '0';
             document.body.appendChild(textarea);
             textarea.select();
             
