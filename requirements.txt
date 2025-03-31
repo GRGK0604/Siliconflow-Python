@@ -1,3 +1,6 @@
 aiohttp
 fastapi
 uvicorn
+aiosqlite
+pydantic
+python-multipart
