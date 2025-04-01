@@ -38,7 +38,7 @@ jobs:
         platforms: linux/amd64,linux/arm64
         push: true
         tags: |
-          ${{ secrets.DOCKERHUB_USERNAME }}/siliconfig-python:latest
-          ${{ secrets.DOCKERHUB_USERNAME }}/siliconfig-python:${{ github.sha }}
+          ${{ secrets.DOCKERHUB_USERNAME }}/siliconflow-python:latest
+          ${{ secrets.DOCKERHUB_USERNAME }}/siliconflow-python:${{ github.sha }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
