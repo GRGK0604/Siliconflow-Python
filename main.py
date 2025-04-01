@@ -31,7 +31,7 @@ LOGGING_CONFIG["formatters"]["default"]["fmt"] = (
 )
 
 app = FastAPI(
-    title="Siliconfig API",
+    title="SiliconFlow API",
     description="A proxy server for the Silicon Flow API with key management",
     version="2.0.0"
 )

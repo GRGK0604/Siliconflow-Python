@@ -39,13 +39,13 @@
 
 ```bash
 docker run -d \
-  --name siliconfig \
+  --name siliconflow \
   -p 7898:7898 \
   -v $(pwd)/data:/app/data \
   -e API_KEY=your_api_key \
   -e ADMIN_USERNAME=admin \
   -e ADMIN_PASSWORD=password \
-  grgk0604/siliconfig-python:latest
+  grgk0604/siliconflow-python:latest
 ```
 
 ### 环境变量
@@ -70,9 +70,9 @@ docker run -d \
 version: '3'
 
 services:
-  siliconfig:
-    image: grgk0604/siliconfig-python:latest
-    container_name: siliconfig
+  siliconflow:
+    image: grgk0604/siliconflow-python:latest
+    container_name: siliconflow
     restart: unless-stopped
     ports:
       - "7898:7898"
