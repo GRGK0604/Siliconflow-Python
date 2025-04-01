@@ -1,31 +1,23 @@
-# 构建阶段
-FROM python:3.9-alpine AS builder
-
-WORKDIR /build
-
-# 安装构建依赖
-RUN apk add --no-cache gcc musl-dev python3-dev
-
-# 复制依赖文件
-COPY requirements.txt .
-
-# 安装依赖到指定目录
-RUN pip install --no-cache-dir --target=/install -r requirements.txt
-
-# 运行阶段
 FROM python:3.9-alpine
 
 WORKDIR /app
 
-# 从构建阶段复制安装好的依赖
-COPY --from=builder /install /usr/local/lib/python3.9/site-packages
-
 # 创建数据目录
 RUN mkdir -p /app/data && chmod -R 777 /app/data
 
+# 安装必要的系统依赖
+RUN apk add --no-cache --virtual .build-deps \
+    gcc \
+    musl-dev \
+    python3-dev
+
+# 复制依赖文件并安装依赖
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    && apk del .build-deps
+
 # 仅复制必要的项目文件
 COPY main.py config.py models.py utils.py db.py ./
-COPY requirements.txt ./
 COPY static/ ./static/
 COPY doc/ ./doc/
 
