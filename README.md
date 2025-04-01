@@ -30,6 +30,68 @@
 5. 在您的应用中设置：
    - OpenAI API 基础 URL：`http://127.0.0.1:7898`
    - API 密钥：任意值（密钥池会自动选择可用密钥）
+
+## Docker 部署
+
+### 使用预构建镜像
+
+项目提供了预构建的Docker镜像，可以直接使用以下命令运行：
+
+```bash
+docker run -d \
+  --name siliconfig \
+  -p 7898:7898 \
+  -v $(pwd)/data:/app/data \
+  -e API_KEY=your_api_key \
+  -e ADMIN_USERNAME=admin \
+  -e ADMIN_PASSWORD=password \
+  grgk0604/siliconfig-python:latest
+```
+
+### 环境变量
+
+通过以下环境变量配置应用：
+
+- `API_KEY`: 可选，设置API访问密钥
+- `ADMIN_USERNAME`: 管理员用户名（默认为配置文件中的值）
+- `ADMIN_PASSWORD`: 管理员密码（默认为配置文件中的值）
+
+### 数据持久化
+
+为确保数据持久化，将数据目录挂载到主机：
+
+```bash
+-v /path/to/local/data:/app/data
+```
+
+### 使用Docker Compose
+
+```yaml
+version: '3'
+
+services:
+  siliconfig:
+    image: grgk0604/siliconfig-python:latest
+    container_name: siliconfig
+    restart: unless-stopped
+    ports:
+      - "7898:7898"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - API_KEY=your_api_key
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=password
+```
+
+将以上内容保存为`docker-compose.yml`文件，然后运行：
+
+```bash
+docker-compose up -d
+```
+
+服务将在 http://localhost:7898 上可用。
+
 ## 示例
 - 登录页
 ![登录页](./doc/login.png)
