@@ -38,7 +38,7 @@
 项目提供了预构建的Docker镜像，可以直接使用以下命令运行：
 
 ```bash
-docker run -d \
+docker run --platform linux/amd64 -d \
   --name siliconflow \
   -p 7898:7898 \
   -v $(pwd)/data:/app/data \
@@ -72,6 +72,7 @@ version: '3'
 services:
   siliconflow:
     image: grgk0604/siliconflow-python:latest
+    platform: linux/amd64
     container_name: siliconflow
     restart: unless-stopped
     ports:
@@ -147,7 +148,7 @@ docker-compose up -d
 如果您需要自行构建优化版镜像，可以使用以下命令：
 
 ```bash
-docker build -t siliconflow-python:alpine .
+docker build --platform linux/amd64 -t siliconflow-python:alpine .
 ```
 
 优化后的镜像体积能够减少70%以上，同时保持完全相同的功能。
@@ -164,11 +165,26 @@ docker build -t siliconflow-python:alpine .
 如果您希望将优化后的镜像推送到DockerHub，可以使用以下命令：
 
 ```bash
-# 构建镜像
-docker build -t grgk0604/siliconflow-python:latest .
+# 构建镜像 (仅x86_64架构)
+docker build --platform linux/amd64 -t grgk0604/siliconflow-python:latest .
 
 # 推送镜像
 docker push grgk0604/siliconflow-python:latest
+```
+
+#### 特定架构构建说明
+
+默认情况下，上述命令只会构建x86_64(amd64)架构的镜像。如果需要支持其他架构或多架构镜像，请使用以下命令：
+
+```bash
+# 构建多架构镜像 (同时支持amd64和arm64)
+docker buildx build --platform linux/amd64,linux/arm64 -t grgk0604/siliconflow-python:latest . --push
+
+# 仅构建x86_64架构镜像
+docker build --platform linux/amd64 -t grgk0604/siliconflow-python:latest .
+
+# 仅构建arm64架构镜像
+docker build --platform linux/arm64 -t grgk0604/siliconflow-python:arm64 .
 ```
 
 使用这个优化后的镜像，您可以更快地部署应用，并节省服务器的存储空间和带宽。
