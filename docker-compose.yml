@@ -1,0 +1,14 @@
+version: '3'
+
+services:
+  siliconflow:
+    image: grgk0604/siliconflow-python:latest
+    container_name: siliconflow
+    restart: unless-stopped
+    ports:
+      - "7898:7898"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=password 

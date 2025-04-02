@@ -5,7 +5,7 @@ import time
 import os
 
 # Path to SQLite database file
-DB_PATH = "pool.db"
+DB_PATH = os.path.join("data", "pool.db")
 
 class AsyncDBPool:
     _instance = None
