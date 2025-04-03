@@ -681,6 +681,163 @@ async def keys_page(authorized: bool = Depends(require_auth)):
     return response
 
 
+@app.get("/stats")
+async def stats_page(authorized: bool = Depends(require_auth)):
+    """Render the statistics page."""
+    response = FileResponse("static/stats.html")
+    # 添加缓存控制头
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
+@app.get("/api/stats/daily")
+async def get_daily_stats(authorized: bool = Depends(require_auth)):
+    """Get daily statistics by hour."""
+    db = await AsyncDBPool.get_instance()
+    
+    # 获取今天的开始时间戳（当地时间的0点）
+    today = time.time()
+    today_start = today - (today % 86400)
+    
+    # 准备数据结构
+    hours = list(range(24))
+    calls = [0] * 24
+    input_tokens = [0] * 24
+    output_tokens = [0] * 24
+    
+    # 获取今日按小时统计的调用数据
+    query = """
+        SELECT 
+            strftime('%H', datetime(call_time, 'unixepoch', 'localtime')) as hour,
+            COUNT(*) as call_count,
+            SUM(input_tokens) as input_sum,
+            SUM(output_tokens) as output_sum
+        FROM logs
+        WHERE call_time >= ?
+        GROUP BY hour
+        ORDER BY hour
+    """
+    
+    rows = await db.execute(query, (today_start,), fetch_all=True)
+    
+    # 填充数据
+    for row in rows:
+        hour = int(row['hour'])
+        if 0 <= hour < 24:
+            calls[hour] = row['call_count']
+            input_tokens[hour] = row['input_sum']
+            output_tokens[hour] = row['output_sum']
+    
+    # 获取今日模型使用分布
+    model_query = """
+        SELECT 
+            model,
+            SUM(total_tokens) as token_sum
+        FROM logs
+        WHERE call_time >= ?
+        GROUP BY model
+        ORDER BY token_sum DESC
+        LIMIT 10
+    """
+    
+    model_rows = await db.execute(model_query, (today_start,), fetch_all=True)
+    model_labels = []
+    model_tokens = []
+    
+    for row in model_rows:
+        if row['model'] and row['token_sum'] > 0:
+            model_labels.append(row['model'])
+            model_tokens.append(row['token_sum'])
+    
+    return JSONResponse({
+        "labels": [str(h) for h in hours],
+        "calls": calls,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "model_labels": model_labels,
+        "model_tokens": model_tokens
+    })
+
+
+@app.get("/api/stats/monthly")
+async def get_monthly_stats(authorized: bool = Depends(require_auth)):
+    """Get monthly statistics by day."""
+    db = await AsyncDBPool.get_instance()
+    
+    # 获取当前月的开始时间戳
+    now = time.localtime()
+    month_start = time.mktime((now.tm_year, now.tm_mon, 1, 0, 0, 0, 0, 0, 0))
+    
+    # 获取当月天数
+    if now.tm_mon == 12:
+        next_month = time.mktime((now.tm_year + 1, 1, 1, 0, 0, 0, 0, 0, 0))
+    else:
+        next_month = time.mktime((now.tm_year, now.tm_mon + 1, 1, 0, 0, 0, 0, 0, 0))
+    
+    days_in_month = int((next_month - month_start) / 86400)
+    
+    # 准备数据结构
+    days = list(range(1, days_in_month + 1))
+    calls = [0] * days_in_month
+    input_tokens = [0] * days_in_month
+    output_tokens = [0] * days_in_month
+    
+    # 获取本月按天统计的调用数据
+    query = """
+        SELECT 
+            strftime('%d', datetime(call_time, 'unixepoch', 'localtime')) as day,
+            COUNT(*) as call_count,
+            SUM(input_tokens) as input_sum,
+            SUM(output_tokens) as output_sum
+        FROM logs
+        WHERE call_time >= ?
+        GROUP BY day
+        ORDER BY day
+    """
+    
+    rows = await db.execute(query, (month_start,), fetch_all=True)
+    
+    # 填充数据
+    for row in rows:
+        day = int(row['day'])
+        if 1 <= day <= days_in_month:
+            calls[day-1] = row['call_count']
+            input_tokens[day-1] = row['input_sum']
+            output_tokens[day-1] = row['output_sum']
+    
+    # 获取本月模型使用分布
+    model_query = """
+        SELECT 
+            model,
+            SUM(total_tokens) as token_sum
+        FROM logs
+        WHERE call_time >= ?
+        GROUP BY model
+        ORDER BY token_sum DESC
+        LIMIT 10
+    """
+    
+    model_rows = await db.execute(model_query, (month_start,), fetch_all=True)
+    model_labels = []
+    model_tokens = []
+    
+    for row in model_rows:
+        if row['model'] and row['token_sum'] > 0:
+            model_labels.append(row['model'])
+            model_tokens.append(row['token_sum'])
+    
+    return JSONResponse({
+        "labels": [str(d) for d in days],
+        "calls": calls,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "model_labels": model_labels,
+        "model_tokens": model_tokens
+    })
+
+
 if __name__ == "__main__":
     import uvicorn
 
