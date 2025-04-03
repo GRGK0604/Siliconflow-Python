@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from config import API_KEY, ADMIN_USERNAME, ADMIN_PASSWORD
+from config import API_KEY, ADMIN_USERNAME, ADMIN_PASSWORD, AUTO_REFRESH_INTERVAL
 import json
 import random
 import time
@@ -13,6 +13,7 @@ import aiohttp
 import uuid
 from uvicorn.config import LOGGING_CONFIG
 from typing import Optional, List, Dict, Any, Tuple
+import logging
 
 # Import our new modules
 from db import AsyncDBPool
@@ -48,12 +49,71 @@ app.add_middleware(
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"))
 
+# 设置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+)
+logger = logging.getLogger("siliconflow")
+
+# 自动刷新密钥的定时任务
+async def auto_refresh_keys_task():
+    """定时自动刷新所有API密钥的余额"""
+    # 如果设置为0，则禁用自动刷新
+    if AUTO_REFRESH_INTERVAL <= 0:
+        logger.info("自动刷新密钥功能已禁用")
+        return
+        
+    logger.info(f"启动自动刷新任务，间隔：{AUTO_REFRESH_INTERVAL}秒")
+    
+    while True:
+        try:
+            # 每隔配置的时间执行一次刷新
+            await asyncio.sleep(AUTO_REFRESH_INTERVAL)
+            
+            logger.info("开始自动刷新API密钥余额...")
+            
+            # 获取所有密钥
+            db = await AsyncDBPool.get_instance()
+            all_keys = await db.get_key_list()
+            
+            if not all_keys:
+                logger.info("没有发现API密钥，跳过刷新")
+                continue
+                
+            # 创建并行验证任务
+            tasks = [validate_key_async(key) for key in all_keys]
+            results = await asyncio.gather(*tasks)
+            
+            # 更新数据库
+            removed = 0
+            updated = 0
+            for key, (valid, balance) in zip(all_keys, results):
+                if valid and float(balance) > 0:
+                    await db.update_key_balance(key, balance)
+                    updated += 1
+                else:
+                    await db.delete_key(key)
+                    removed += 1
+            
+            # 使统计缓存失效
+            invalidate_stats_cache()
+            
+            logger.info(f"自动刷新完成: 已更新 {updated} 个密钥, 移除 {removed} 个无效密钥")
+            
+        except Exception as e:
+            logger.error(f"自动刷新密钥任务出错: {str(e)}")
+            await asyncio.sleep(60)  # 出错后等待一分钟再试
+
 # Initialize the database on startup
 @app.on_event("startup")
 async def startup_event():
     # Initialize the database
     db = await AsyncDBPool.get_instance()
     await db.initialize()
+    
+    # 启动自动刷新密钥的后台任务
+    asyncio.create_task(auto_refresh_keys_task())
 
 # Custom exception handlers
 @app.exception_handler(StarletteHTTPException)

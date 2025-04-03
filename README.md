@@ -45,6 +45,7 @@ docker run --platform linux/amd64 -d \
   -e API_KEY=your_api_key \
   -e ADMIN_USERNAME=admin \
   -e ADMIN_PASSWORD=password \
+  -e AUTO_REFRESH_INTERVAL=3600 \
   grgk0604/siliconflow-python:latest
 ```
 
@@ -55,6 +56,7 @@ docker run --platform linux/amd64 -d \
 - `API_KEY`: 可选，设置API访问密钥
 - `ADMIN_USERNAME`: 管理员用户名（默认为配置文件中的值）
 - `ADMIN_PASSWORD`: 管理员密码（默认为配置文件中的值）
+- `AUTO_REFRESH_INTERVAL`: API密钥余额自动刷新间隔（秒），默认为3600秒（1小时），设置为0禁用自动刷新
 
 ### 数据持久化
 
@@ -83,6 +85,7 @@ services:
       - API_KEY=your_api_key
       - ADMIN_USERNAME=admin
       - ADMIN_PASSWORD=password
+      - AUTO_REFRESH_INTERVAL=3600
 ```
 
 将以上内容保存为`docker-compose.yml`文件，然后运行：
@@ -105,6 +108,7 @@ docker-compose up -d
 
 - 请保护好生成的 `data/pool.db` 文件，它包含您的所有 API 密钥！
 - 系统会自动清理无效或余额为零的密钥
+- 系统会根据配置的时间间隔自动刷新所有API密钥的余额（可通过AUTO_REFRESH_INTERVAL环境变量设置，默认每小时一次）
 - 登录会话有效期为 24 小时
 - 容器升级时请确保正确挂载 `/app/data` 目录，否则密钥数据会丢失
 
