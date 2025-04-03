@@ -204,6 +204,7 @@
                     <div class="nav-links">
                         <a href="/admin" class="nav-link">首页</a>
                         <a href="/keys" class="nav-link active">密钥管理</a>
+                        <a href="/stats" class="nav-link">使用统计</a>
                         <a href="/logout" class="logout-btn">退出</a>
                     </div>
                 </div>
@@ -440,7 +441,7 @@
         // 获取总体统计信息
         async function fetchStats() {
             try {
-                const response = await fetch('/stats');
+                const response = await fetch('/api/stats/overview');
                 if (!response.ok) {
                     throw new Error('获取统计信息失败');
                 }

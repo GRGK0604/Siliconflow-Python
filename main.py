@@ -492,8 +492,8 @@ async def list_models(request: Request):
         raise HTTPException(status_code=500, detail=f"请求转发失败: {str(e)}")
 
 
-@app.get("/stats")
-async def stats(authorized: bool = Depends(require_auth)):
+@app.get("/api/stats/overview")
+async def stats_overview(authorized: bool = Depends(require_auth)):
     """Get system statistics."""
     db = await AsyncDBPool.get_instance()
     stats_data = await db.get_stats()

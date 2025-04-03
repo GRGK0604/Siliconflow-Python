@@ -230,6 +230,7 @@
                     <div class="nav-links">
                         <a href="/admin" class="nav-link active">控制台</a>
                         <a href="/keys" class="nav-link">密钥管理</a>
+                        <a href="/stats" class="nav-link">使用统计</a>
                         <a href="/logout" class="logout-btn">退出</a>
                     </div>
                 </div>
@@ -423,7 +424,7 @@
         }
         
         async function fetchStats() {
-            const response = await fetch("/stats");
+            const response = await fetch("/api/stats/overview");
             const data = await response.json();
             document.getElementById("keyCount").textContent = Math.floor(data.key_count || 0);
             document.getElementById("totalBalance").textContent = `¥${parseFloat(data.total_balance || 0).toFixed(2)}`;
