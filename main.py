@@ -14,6 +14,7 @@ import uuid
 from uvicorn.config import LOGGING_CONFIG
 from typing import Optional, List, Dict, Any, Tuple
 import logging
+from asyncio import Semaphore
 
 # Import our new modules
 from db import AsyncDBPool
@@ -59,21 +60,25 @@ logger = logging.getLogger("siliconflow")
 # 自动刷新密钥的定时任务
 async def auto_refresh_keys_task():
     """定时自动刷新所有API密钥的余额"""
-    # 如果设置为0，则禁用自动刷新
     if AUTO_REFRESH_INTERVAL <= 0:
         logger.info("自动刷新密钥功能已禁用")
         return
         
     logger.info(f"启动自动刷新任务，间隔：{AUTO_REFRESH_INTERVAL}秒")
     
+    # 限制并发请求数
+    MAX_CONCURRENT = 5
+    semaphore = Semaphore(MAX_CONCURRENT)
+    
+    async def validate_with_semaphore(key: str):
+        async with semaphore:
+            return await validate_key_async(key)
+    
     while True:
         try:
-            # 每隔配置的时间执行一次刷新
             await asyncio.sleep(AUTO_REFRESH_INTERVAL)
-            
             logger.info("开始自动刷新API密钥余额...")
             
-            # 获取所有密钥
             db = await AsyncDBPool.get_instance()
             all_keys = await db.get_key_list()
             
@@ -81,25 +86,35 @@ async def auto_refresh_keys_task():
                 logger.info("没有发现API密钥，跳过刷新")
                 continue
                 
-            # 创建并行验证任务
-            tasks = [validate_key_async(key) for key in all_keys]
-            results = await asyncio.gather(*tasks)
+            # 创建验证任务，限制并发
+            tasks = [validate_with_semaphore(key) for key in all_keys]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
             
-            # 更新数据库
+            # 处理结果
             removed = 0
             updated = 0
-            for key, (valid, balance) in zip(all_keys, results):
-                if valid and float(balance) > 0:
+            skipped = 0
+            for key, result in zip(all_keys, results):
+                if isinstance(result, Exception):
+                    logger.error(f"验证密钥 {key[:4]}**** 时发生异常: {str(result)}")
+                    skipped += 1
+                    continue
+                
+                valid, balance, error = result
+                if valid and balance is not None and balance > 0:
                     await db.update_key_balance(key, balance)
                     updated += 1
-                else:
+                    logger.info(f"密钥 {key[:4]}**** 更新余额: {balance}")
+                elif valid is False:
                     await db.delete_key(key)
                     removed += 1
+                    logger.warning(f"密钥 {key[:4]}**** 无效，已删除: {error}")
+                else:
+                    skipped += 1
+                    logger.info(f"密钥 {key[:4]}**** 跳过更新: {error}")
             
-            # 使统计缓存失效
             invalidate_stats_cache()
-            
-            logger.info(f"自动刷新完成: 已更新 {updated} 个密钥, 移除 {removed} 个无效密钥")
+            logger.info(f"自动刷新完成: 已更新 {updated} 个密钥, 移除 {removed} 个无效密钥, 跳过 {skipped} 个")
             
         except Exception as e:
             logger.error(f"自动刷新密钥任务出错: {str(e)}")
@@ -119,20 +134,17 @@ async def startup_event():
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     if exc.status_code == 401:
-        # 对于 API 请求，返回 JSON 响应
         if request.url.path.startswith("/v1/") or request.headers.get("accept") == "application/json":
             return JSONResponse(
                 status_code=401,
                 content={"detail": "未授权访问，请先登录"}
             )
-        # 对于网页请求，显示 401 页面
         return FileResponse("static/401.html", status_code=401)
     elif exc.status_code == 404:
         return FileResponse("static/404.html", status_code=404)
     elif exc.status_code == 500:
         return FileResponse("static/500.html", status_code=500)
     
-    # 对于其他错误，返回 JSON 或通用错误页面
     if request.url.path.startswith("/v1/") or request.headers.get("accept") == "application/json":
         return JSONResponse(
             status_code=exc.status_code,
@@ -143,14 +155,12 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         content={"detail": str(exc.detail)}
     )
 
-
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(
         status_code=422,
         content={"detail": str(exc)}
     )
-
 
 # Authentication functions
 async def create_session(username: str) -> str:
@@ -159,7 +169,6 @@ async def create_session(username: str) -> str:
     db = await AsyncDBPool.get_instance()
     await db.create_session(session_id, username)
     return session_id
-
 
 async def validate_session(session_id: str = Cookie(None)) -> bool:
     """Validate a user session."""
@@ -175,7 +184,6 @@ async def validate_session(session_id: str = Cookie(None)) -> bool:
     session = await db.get_session(session_id)
     return bool(session)
 
-
 async def require_auth(session_id: str = Cookie(None)):
     """Require authentication to access a resource."""
     if not session_id:
@@ -183,51 +191,40 @@ async def require_auth(session_id: str = Cookie(None)):
     
     db = await AsyncDBPool.get_instance()
     
-    # Clean up old sessions
     try:
         await db.cleanup_old_sessions()
     except Exception as e:
-        print(f"清理过期会话时出错: {str(e)}")
-        # 继续执行，不要因为清理失败而阻止用户访问
+        logger.error(f"清理过期会话时出错: {str(e)}")
     
-    # Check if session exists
     try:
         session = await db.get_session(session_id)
         if not session:
             raise HTTPException(status_code=401, detail="会话已过期，请重新登录")
     except Exception as e:
-        print(f"检查会话时出错: {str(e)}")
+        logger.error(f"检查会话时出错: {str(e)}")
         raise HTTPException(status_code=401, detail="验证会话时出错，请重新登录")
     
     return True
 
-
 @app.get("/")
 async def root(session_id: str = Cookie(None)):
-    # 检查用户是否已登录
     if session_id:
         try:
             is_valid = await validate_session(session_id)
             if is_valid:
-                # 用户已登录，重定向到 admin 页面
                 return RedirectResponse(url="/admin")
         except Exception as e:
-            print(f"检查会话时出错: {str(e)}")
-            # 出错时继续显示登录页面
+            logger.error(f"检查会话时出错: {str(e)}")
     
-    # 用户未登录或会话无效，显示登录页面
     return FileResponse("static/index.html")
-
 
 @app.get("/admin")
 async def admin_page(authorized: bool = Depends(require_auth)):
     response = FileResponse("static/admin.html")
-    # 添加缓存控制头
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
-
 
 @app.post("/login")
 async def login(login_data: LoginRequest):
@@ -238,40 +235,31 @@ async def login(login_data: LoginRequest):
             key="session_id",
             value=session_id,
             httponly=True,
-            max_age=86400,  # 24 hours
+            max_age=86400,
             samesite="lax"
         )
         return response
     else:
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
-
 @app.get("/logout")
 async def logout(session_id: str = Cookie(None)):
-    # 清除数据库中的会话
     if session_id:
         db = await AsyncDBPool.get_instance()
         await db.delete_session(session_id)
     
-    # 创建重定向响应
-    response = RedirectResponse(url="/", status_code=303)  # 使用 303 See Other 状态码
-    
-    # 添加缓存控制头，防止浏览器缓存
+    response = RedirectResponse(url="/", status_code=303)
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
-    
-    # 正确地删除 cookie
     response.delete_cookie(
         key="session_id",
-        path="/",  # 确保删除所有路径下的 cookie
-        secure=False,  # 根据您的环境设置
+        path="/",
+        secure=False,
         httponly=True,
         samesite="lax"
     )
-    
     return response
-
 
 @app.post("/import_keys")
 async def import_keys(key_data: APIKeyImport, authorized: bool = Depends(require_auth)):
@@ -280,28 +268,22 @@ async def import_keys(key_data: APIKeyImport, authorized: bool = Depends(require
     if not keys:
         raise HTTPException(status_code=400, detail="未提供有效的api-key")
     
-    # Get database instance
     db = await AsyncDBPool.get_instance()
-    
-    # Check for duplicate keys
     duplicate_keys = []
     all_keys = await db.get_key_list()
     for key in keys:
         if key in all_keys:
             duplicate_keys.append(key)
     
-    # Prepare tasks for validation
     tasks = []
     for key in keys:
         if key in duplicate_keys:
-            # Skip validation for duplicate keys
             tasks.append(asyncio.sleep(0, result=("duplicate", key)))
         else:
             tasks.append(validate_key_async(key))
     
     results = await asyncio.gather(*tasks)
     
-    # Process results
     imported_count = 0
     duplicate_count = len(duplicate_keys)
     invalid_count = 0
@@ -310,14 +292,14 @@ async def import_keys(key_data: APIKeyImport, authorized: bool = Depends(require
         if isinstance(result, tuple) and result[0] == "duplicate":
             continue
         else:
-            valid, balance = result
-            if valid and float(balance) > 0:
+            valid, balance, error = result
+            if valid and balance is not None and balance > 0:
                 await db.insert_api_key(keys[idx], balance)
                 imported_count += 1
             else:
                 invalid_count += 1
+                logger.info(f"导入密钥 {keys[idx][:4]}**** 失败: {error or '无效或余额为零'}")
     
-    # Invalidate stats cache
     invalidate_stats_cache()
     
     return JSONResponse(
@@ -326,39 +308,38 @@ async def import_keys(key_data: APIKeyImport, authorized: bool = Depends(require
         }
     )
 
-
 @app.post("/refresh")
 async def refresh_keys(authorized: bool = Depends(require_auth)):
-    # Get all keys
     db = await AsyncDBPool.get_instance()
     all_keys = await db.get_key_list()
 
-    # Create tasks for parallel validation
     tasks = [validate_key_async(key) for key in all_keys]
     results = await asyncio.gather(*tasks)
 
-    # Update database with results
     removed = 0
-    for key, (valid, balance) in zip(all_keys, results):
-        if valid and float(balance) > 0:
+    updated = 0
+    skipped = 0
+    for key, (valid, balance, error) in zip(all_keys, results):
+        if valid and balance is not None and balance > 0:
             await db.update_key_balance(key, balance)
-        else:
+            updated += 1
+        elif valid is False:
             await db.delete_key(key)
             removed += 1
+            logger.warning(f"密钥 {key[:4]}**** 无效，已删除: {error}")
+        else:
+            skipped += 1
+            logger.info(f"密钥 {key[:4]}**** 跳过更新: {error}")
 
-    # Invalidate the stats cache
     invalidate_stats_cache()
 
     return JSONResponse(
-        {"message": f"刷新完成，共移除 {removed} 个余额用尽或无效的key"}
+        {"message": f"刷新完成: 更新 {updated} 个密钥, 移除 {removed} 个无效密钥, 跳过 {skipped} 个"}
     )
-
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, background_tasks: BackgroundTasks):
-    # 检查是否配置了 API_KEY
     if API_KEY is not None:
-        # 获取请求头中的 Authorization
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
             raise HTTPException(
@@ -368,48 +349,30 @@ async def chat_completions(request: Request, background_tasks: BackgroundTasks):
             )
         
         api_key = auth_header.replace("Bearer ", "").strip()
-        
-        # 验证 API 密钥是否与配置的密钥匹配
         if api_key != API_KEY:
             raise HTTPException(status_code=401, detail="无效的 API 密钥")
     
-    # 获取并验证可用的密钥
     db = await AsyncDBPool.get_instance()
     keys = await db.get_best_keys(limit=10)
     
     if not keys:
         raise HTTPException(status_code=500, detail="没有可用的API密钥")
     
-    # 随机选择前10个余额较高的密钥中的一个
     selected_key = random.choice(keys)
-    
-    # 更新使用计数
     background_tasks.add_task(db.increment_key_usage, selected_key)
     
-    # 解析请求体
     body = await request.json()
-    
-    # 获取模型名称，确保它不为空
-    model = body.get("model", "")
-    if not model:
-        model = "gpt-4o"  # 设置默认模型名称
-    
-    # 记录请求时间
+    model = body.get("model", "gpt-4o")
     call_time_stamp = time.time()
-    
-    # 检查是否是流式请求
     is_stream = body.get("stream", False)
     
-    # 准备转发请求的头部
     headers = {
         "Authorization": f"Bearer {selected_key}",
         "Content-Type": "application/json",
     }
     
     if is_stream:
-        # Process streaming response
         async def stream_with_logging():
-            """Wrap streaming to add background task for logging at the end"""
             completion_tokens = 0
             prompt_tokens = 0
             total_tokens = 0
@@ -417,7 +380,6 @@ async def chat_completions(request: Request, background_tasks: BackgroundTasks):
             async for chunk in stream_response(selected_key, "/v1/chat/completions", body, headers):
                 yield chunk
                 
-                # Try to extract token info from the chunk
                 try:
                     chunk_str = chunk.decode('utf-8')
                     if chunk_str.startswith('data: ') and 'usage' in chunk_str:
@@ -430,7 +392,6 @@ async def chat_completions(request: Request, background_tasks: BackgroundTasks):
                 except:
                     pass
             
-            # Once the stream is finished, log the completion
             background_tasks.add_task(
                 db.log_completion,
                 selected_key,
@@ -451,7 +412,6 @@ async def chat_completions(request: Request, background_tasks: BackgroundTasks):
             }
         )
     else:
-        # Process non-streaming response
         try:
             status, response_data = await make_api_request(
                 "/v1/chat/completions", 
@@ -464,13 +424,11 @@ async def chat_completions(request: Request, background_tasks: BackgroundTasks):
             if status != 200:
                 raise HTTPException(status_code=status, detail=response_data.get("error", "API request failed"))
             
-            # 计算 token 使用量
             usage = response_data.get("usage", {})
             prompt_tokens = usage.get("prompt_tokens", 0)
             completion_tokens = usage.get("completion_tokens", 0)
             total_tokens = usage.get("total_tokens", 0)
             
-            # 记录使用情况
             background_tasks.add_task(
                 db.log_completion,
                 selected_key,
@@ -483,31 +441,25 @@ async def chat_completions(request: Request, background_tasks: BackgroundTasks):
             
             return JSONResponse(response_data)
         except Exception as e:
+            logger.error(f"Chat completion failed: {str(e)}")
             raise HTTPException(status_code=500, detail=f"请求处理失败: {str(e)}")
-
 
 @app.post("/v1/embeddings")
 async def embeddings(request: Request, background_tasks: BackgroundTasks):
-    # Check API_KEY if configured
     if API_KEY is not None:
         request_api_key = request.headers.get("Authorization")
         if request_api_key != f"Bearer {API_KEY}":
             raise HTTPException(status_code=403, detail="无效的API_KEY")
     
-    # Get a key from the pool
     db = await AsyncDBPool.get_instance()
     keys = await db.get_key_list()
     
     if not keys:
         raise HTTPException(status_code=500, detail="没有可用的api-key")
     
-    # Choose a random key
     selected = random.choice(keys)
-    
-    # Update usage count
     background_tasks.add_task(db.increment_key_usage, selected)
     
-    # Forward the request
     forward_headers = dict(request.headers)
     forward_headers["Authorization"] = f"Bearer {selected}"
     
@@ -522,22 +474,18 @@ async def embeddings(request: Request, background_tasks: BackgroundTasks):
                 data = await resp.json()
                 return JSONResponse(content=data, status_code=resp.status)
     except Exception as e:
+        logger.error(f"Embeddings request failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"请求转发失败: {str(e)}")
-
 
 @app.get("/v1/models")
 async def list_models(request: Request):
-    # Get a key from the pool
     db = await AsyncDBPool.get_instance()
     keys = await db.get_key_list()
     
     if not keys:
         raise HTTPException(status_code=500, detail="没有可用的api-key")
     
-    # Choose a random key
     selected = random.choice(keys)
-    
-    # Forward the request
     forward_headers = dict(request.headers)
     forward_headers["Authorization"] = f"Bearer {selected}"
     
@@ -549,41 +497,31 @@ async def list_models(request: Request):
                 data = await resp.json()
                 return JSONResponse(content=data, status_code=resp.status)
     except Exception as e:
+        logger.error(f"List models request failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"请求转发失败: {str(e)}")
-
 
 @app.get("/api/stats/overview")
 async def stats_overview(authorized: bool = Depends(require_auth)):
     """Get system statistics."""
     db = await AsyncDBPool.get_instance()
     stats_data = await db.get_stats()
-    
     return JSONResponse(StatsResponse(**stats_data).dict())
-
 
 @app.get("/export_keys")
 async def export_keys(authorized: bool = Depends(require_auth)):
     """Export all API keys as a text file."""
     db = await AsyncDBPool.get_instance()
     keys = await db.get_key_list()
-    
     keys_text = "\n".join(keys)
     headers = {"Content-Disposition": "attachment; filename=keys.txt"}
-    
     return Response(content=keys_text, media_type="text/plain", headers=headers)
 
-
 @app.get("/logs")
-async def get_logs(
-    page: int = 1, 
-    model: str = None, 
-    authorized: bool = Depends(require_auth)
-):
+async def get_logs(page: int = 1, model: str = None, authorized: bool = Depends(require_auth)):
     """Get paginated logs with optional model filter."""
     db = await AsyncDBPool.get_instance()
     logs, total = await db.get_logs(page=page, page_size=10, model=model)
     
-    # Format logs for response
     formatted_logs = []
     for log in logs:
         formatted_logs.append(LogEntry(
@@ -602,30 +540,20 @@ async def get_logs(
         page_size=10
     ).dict())
 
-
 @app.post("/clear_logs")
 async def clear_logs(authorized: bool = Depends(require_auth)):
     """Clear all logs from the database."""
     db = await AsyncDBPool.get_instance()
-    
     try:
         await db.clear_logs()
-        
-        # Invalidate stats cache
         invalidate_stats_cache()
-        
         return JSONResponse({"message": "日志已清空"})
     except Exception as e:
+        logger.error(f"Clear logs failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"清空日志失败: {str(e)}")
 
-
 @app.get("/api/keys")
-async def get_keys(
-    page: int = 1, 
-    sort_field: str = "add_time", 
-    sort_order: str = "desc", 
-    authorized: bool = Depends(require_auth)
-):
+async def get_keys(page: int = 1, sort_field: str = "add_time", sort_order: str = "desc", authorized: bool = Depends(require_auth)):
     """Get paginated API keys with sorting options."""
     allowed_fields = ["add_time", "balance", "usage_count"]
     allowed_orders = ["asc", "desc"]
@@ -639,16 +567,12 @@ async def get_keys(
     offset = (page - 1) * page_size
 
     db = await AsyncDBPool.get_instance()
-    
-    # Custom query for sorted, paginated keys
     query = f"SELECT key, add_time, balance, usage_count FROM api_keys ORDER BY {sort_field} {sort_order} LIMIT ? OFFSET ?"
     rows = await db.execute(query, (page_size, offset), fetch_all=True)
     
-    # Get total count
     count_row = await db.execute("SELECT COUNT(*) as count FROM api_keys", fetch_one=True)
     total = count_row['count'] if count_row else 0
     
-    # Format keys
     key_list = []
     for row in rows:
         key_list.append(APIKeyInfo(
@@ -669,35 +593,25 @@ async def get_keys(
 async def refresh_single_key(key_data: APIKeyRefresh, authorized: bool = Depends(require_auth)):
     """Refresh a single API key's balance."""
     key = key_data.key
-    
-    # Validate key
-    valid, balance = await validate_key_async(key)
+    valid, balance, error = await validate_key_async(key)
     
     db = await AsyncDBPool.get_instance()
     
-    if valid and float(balance) > 0:
-        # Update key balance
+    if valid and balance is not None and balance > 0:
         await db.update_key_balance(key, balance)
-        
-        # Invalidate stats cache
         invalidate_stats_cache()
-        
         return JSONResponse({"message": "密钥刷新成功", "balance": balance})
-    else:
-        # Delete invalid key
+    elif valid is False:
         await db.delete_key(key)
-        
-        # Invalidate stats cache
         invalidate_stats_cache()
-        
-        raise HTTPException(status_code=400, detail="密钥无效或余额为零，已从系统中移除")
+        raise HTTPException(status_code=400, detail=f"密钥无效，已从系统中移除: {error}")
+    else:
+        raise HTTPException(status_code=500, detail=f"密钥刷新失败: {error}")
 
 @app.get("/api/key_info")
 async def get_key_info(key: str, authorized: bool = Depends(require_auth)):
     """Get information about a specific API key."""
     db = await AsyncDBPool.get_instance()
-    
-    # Custom query to get key info
     row = await db.execute(
         "SELECT key, balance, usage_count, add_time FROM api_keys WHERE key = ?", 
         (key,),
@@ -714,60 +628,46 @@ async def get_key_info(key: str, authorized: bool = Depends(require_auth)):
         "add_time": row['add_time']
     })
 
-# Add a general exception handler for uncaught exceptions
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    # Log the error here if needed
-    print(f"Unhandled exception: {str(exc)}")
-    
-    # For API endpoints, return JSON error
+    logger.error(f"Unhandled exception: {str(exc)}")
     if request.url.path.startswith("/v1/") or request.headers.get("accept") == "application/json":
         return JSONResponse(
             status_code=500,
             content={"detail": "服务器内部错误"}
         )
-    # For web pages, return the 500 error page
     return FileResponse("static/500.html", status_code=500)
-
 
 @app.get("/keys")
 async def keys_page(authorized: bool = Depends(require_auth)):
     """Render the keys management page."""
     response = FileResponse("static/keys.html")
-    # 添加缓存控制头
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
-
 
 @app.get("/stats")
 async def stats_page(authorized: bool = Depends(require_auth)):
     """Render the statistics page."""
     response = FileResponse("static/stats.html")
-    # 添加缓存控制头
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
 
-
 @app.get("/api/stats/daily")
 async def get_daily_stats(authorized: bool = Depends(require_auth)):
     """Get daily statistics by hour."""
     db = await AsyncDBPool.get_instance()
-    
-    # 获取今天的开始时间戳（当地时间的0点）
     today = time.time()
     today_start = today - (today % 86400)
     
-    # 准备数据结构
     hours = list(range(24))
     calls = [0] * 24
     input_tokens = [0] * 24
     output_tokens = [0] * 24
     
-    # 获取今日按小时统计的调用数据
     query = """
         SELECT 
             strftime('%H', datetime(call_time, 'unixepoch', 'localtime')) as hour,
@@ -782,7 +682,6 @@ async def get_daily_stats(authorized: bool = Depends(require_auth)):
     
     rows = await db.execute(query, (today_start,), fetch_all=True)
     
-    # 填充数据
     for row in rows:
         hour = int(row['hour'])
         if 0 <= hour < 24:
@@ -790,7 +689,6 @@ async def get_daily_stats(authorized: bool = Depends(require_auth)):
             input_tokens[hour] = row['input_sum']
             output_tokens[hour] = row['output_sum']
     
-    # 获取今日模型使用分布
     model_query = """
         SELECT 
             model,
@@ -820,17 +718,13 @@ async def get_daily_stats(authorized: bool = Depends(require_auth)):
         "model_tokens": model_tokens
     })
 
-
 @app.get("/api/stats/monthly")
 async def get_monthly_stats(authorized: bool = Depends(require_auth)):
     """Get monthly statistics by day."""
     db = await AsyncDBPool.get_instance()
-    
-    # 获取当前月的开始时间戳
     now = time.localtime()
     month_start = time.mktime((now.tm_year, now.tm_mon, 1, 0, 0, 0, 0, 0, 0))
     
-    # 获取当月天数
     if now.tm_mon == 12:
         next_month = time.mktime((now.tm_year + 1, 1, 1, 0, 0, 0, 0, 0, 0))
     else:
@@ -838,13 +732,11 @@ async def get_monthly_stats(authorized: bool = Depends(require_auth)):
     
     days_in_month = int((next_month - month_start) / 86400)
     
-    # 准备数据结构
     days = list(range(1, days_in_month + 1))
     calls = [0] * days_in_month
     input_tokens = [0] * days_in_month
     output_tokens = [0] * days_in_month
     
-    # 获取本月按天统计的调用数据
     query = """
         SELECT 
             strftime('%d', datetime(call_time, 'unixepoch', 'localtime')) as day,
@@ -859,7 +751,6 @@ async def get_monthly_stats(authorized: bool = Depends(require_auth)):
     
     rows = await db.execute(query, (month_start,), fetch_all=True)
     
-    # 填充数据
     for row in rows:
         day = int(row['day'])
         if 1 <= day <= days_in_month:
@@ -867,7 +758,6 @@ async def get_monthly_stats(authorized: bool = Depends(require_auth)):
             input_tokens[day-1] = row['input_sum']
             output_tokens[day-1] = row['output_sum']
     
-    # 获取本月模型使用分布
     model_query = """
         SELECT 
             model,
@@ -897,8 +787,6 @@ async def get_monthly_stats(authorized: bool = Depends(require_auth)):
         "model_tokens": model_tokens
     })
 
-
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run(app, host="0.0.0.0", port=7898)
