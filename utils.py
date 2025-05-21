@@ -27,8 +27,8 @@ async def validate_key_async(api_key: str) -> Tuple[Optional[bool], Optional[flo
     """
     Validate an API key against the Silicon Flow API.
     Returns (is_valid, balance, error_message) tuple:
-    - is_valid: True (valid key), False (invalid key or any error)
-    - balance: Balance if valid, None otherwise
+    - is_valid: True if status code is 200 and totalBalance > 0, False otherwise
+    - balance: Balance if status code is 200, None otherwise
     - error_message: Error details if validation failed or key is invalid
     """
     logger.info(f"开始验证API密钥 {api_key[:4]}****")
@@ -40,7 +40,7 @@ async def validate_key_async(api_key: str) -> Tuple[Optional[bool], Optional[flo
     if cache_key in API_KEY_CACHE:
         timestamp, result = API_KEY_CACHE[cache_key]
         if current_time - timestamp < API_KEY_CACHE_TTL:
-            logger.debug(f"Cache hit for key {api_key[:4]}****: {result}")
+            logger.debug(f"缓存命中 for key {api_key[:4]}****: {result}")
             return result
     
     # No valid cache entry, make the API call
@@ -51,30 +51,35 @@ async def validate_key_async(api_key: str) -> Tuple[Optional[bool], Optional[flo
             async with session.get(
                 f"{BASE_URL}/v1/user/info", headers=headers, timeout=10
             ) as r:
+                response_text = await r.text()
+                logger.debug(f"API 响应状态码: {r.status}, 内容: {response_text}")
                 if r.status == 200:
                     data = await r.json()
                     balance = data.get("data", {}).get("totalBalance", 0)
-                    result = (True, float(balance), None)
-                    logger.info(f"Validated key {api_key[:4]}****: balance={balance}")
+                    if balance > 0:
+                        result = (True, float(balance), None)
+                        logger.info(f"验证成功 for key {api_key[:4]}****: balance={balance}")
+                    else:
+                        result = (False, None, "余额为 0")
+                        logger.warning(f"验证失败 for key {api_key[:4]}****: 余额为 0")
                 else:
-                    # Treat all non-200 status codes as invalid key, including 500
-                    error_msg = f"Status {r.status}: {await r.text()}"
+                    error_msg = f"状态码 {r.status}: {response_text}"
                     result = (False, None, error_msg)
-                    logger.warning(f"Invalid key {api_key[:4]}****: {error_msg}")
+                    logger.warning(f"验证失败 for key {api_key[:4]}****: {error_msg}")
     except aiohttp.ClientError as e:
-        result = (False, None, f"Network error: {str(e)}")
-        logger.error(f"Network error validating key {api_key[:4]}****: {str(e)}")
+        result = (False, None, f"网络错误: {str(e)}")
+        logger.error(f"网络错误 validating key {api_key[:4]}****: {str(e)}")
     except asyncio.TimeoutError:
-        result = (False, None, "Request timeout")
-        logger.error(f"Timeout validating key {api_key[:4]}****")
+        result = (False, None, "请求超时")
+        logger.error(f"请求超时 validating key {api_key[:4]}****")
     except Exception as e:
-        result = (False, None, f"Unexpected error: {str(e)}")
-        logger.error(f"Unexpected error validating key {api_key[:4]}****: {str(e)}")
+        result = (False, None, f"未知错误: {str(e)}")
+        logger.error(f"未知错误 validating key {api_key[:4]}****: {str(e)}")
     
     # Cache only successful results
     if result[0] is True:
         API_KEY_CACHE[cache_key] = (current_time, result)
-        logger.debug(f"Cached result for key {api_key[:4]}****: {result}")
+        logger.debug(f"缓存结果 for key {api_key[:4]}****: {result}")
     
     return result
 
@@ -125,14 +130,14 @@ async def make_api_request(
                     status = resp.status
                     data = await resp.json()
             else:
-                logger.error(f"Unsupported method: {method}")
-                return 400, {"error": f"Unsupported method: {method}"}
+                logger.error(f"不支持的请求方法: {method}")
+                return 400, {"error": f"不支持的请求方法: {method}"}
                 
-            logger.debug(f"API request to {endpoint} returned status {status}")
+            logger.debug(f"API 请求 {endpoint} 返回状态码 {status}")
             return status, data
     except Exception as e:
-        logger.error(f"API request to {endpoint} failed: {str(e)}")
-        return 500, {"error": f"API request failed: {str(e)}"}
+        logger.error(f"API 请求 {endpoint} 失败: {str(e)}")
+        return 500, {"error": f"API 请求失败: {str(e)}"}
 
 async def stream_response(api_key: str, endpoint: str, request_data: Dict[str, Any], headers: Dict[str, str]):
     """
@@ -148,7 +153,7 @@ async def stream_response(api_key: str, endpoint: str, request_data: Dict[str, A
             ) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
-                    logger.error(f"Streaming request to {endpoint} failed with status {resp.status}: {error_text}")
+                    logger.error(f"流式请求 {endpoint} 失败，状态码 {resp.status}: {error_text}")
                     yield f"data: {{'error': '{error_text}'}}\n\n".encode('utf-8')
                     return
                 
@@ -156,9 +161,9 @@ async def stream_response(api_key: str, endpoint: str, request_data: Dict[str, A
                 async for line in resp.content:
                     if line:
                         yield line
-                        logger.debug(f"Streamed chunk from {endpoint}")
+                        logger.debug(f"流式传输块 from {endpoint}")
         except Exception as e:
             error_json = f"data: {{'error': '{str(e)}'}}\n\n"
-            logger.error(f"Streaming request to {endpoint} failed: {str(e)}")
+            logger.error(f"流式请求 {endpoint} 失败: {str(e)}")
             yield error_json.encode('utf-8')
             yield b"data: [DONE]\n\n"

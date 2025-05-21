@@ -86,10 +86,10 @@ async def auto_refresh_keys_task():
             all_keys = await db.get_key_list()
             
             if not all_keys:
-                logger.info("没有发现API密钥，跳过刷新")
+                logger.warning("当前数据库中没有API密钥，请通过 /import_keys 端点添加密钥")
                 continue
                 
-            logger.info(f"发现 {len(all_keys)} 个API密钥，开始验证...")
+            logger.info(f"发现 {len(all_keys)} 个API密钥: {[key[:4] + '****' for key in all_keys]}")
             
             # 创建验证任务，限制并发
             tasks = [validate_with_semaphore(key) for key in all_keys]
@@ -101,14 +101,15 @@ async def auto_refresh_keys_task():
             for key, result in zip(all_keys, results):
                 if isinstance(result, Exception):
                     logger.error(f"验证密钥 {key[:4]}**** 时发生异常: {str(result)}")
-                    await db.delete_key(key)  # 异常时也删除密钥
+                    await db.delete_key(key)
                     removed += 1
                     continue
                 
                 valid, balance, error = result
-                if valid and balance is not None and balance > 0:
+                if valid:
                     await db.update_key_balance(key, balance)
                     updated += 1
+                    logger.info(f"密钥 {key[:4]}**** 更新成功")
                 else:
                     await db.delete_key(key)
                     removed += 1
@@ -157,7 +158,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
             content={"detail": str(exc.detail)}
         )
     return JSONResponse(
-        status_code=exc.status_code,
+        status_code=exp.status_code,
         content={"detail": str(exc.detail)}
     )
 
@@ -299,7 +300,7 @@ async def import_keys(key_data: APIKeyImport, authorized: bool = Depends(require
             continue
         else:
             valid, balance, error = result
-            if valid and balance is not None and balance > 0:
+            if valid:
                 await db.insert_api_key(keys[idx], balance)
                 imported_count += 1
             else:
@@ -319,15 +320,22 @@ async def refresh_keys(authorized: bool = Depends(require_auth)):
     db = await AsyncDBPool.get_instance()
     all_keys = await db.get_key_list()
 
+    if not all_keys:
+        logger.warning("当前数据库中没有API密钥，请通过 /import_keys 端点添加密钥")
+        return JSONResponse({"message": "没有API密钥可刷新，请先添加密钥"})
+
+    logger.info(f"发现 {len(all_keys)} 个API密钥: {[key[:4] + '****' for key in all_keys]}")
+
     tasks = [validate_key_async(key) for key in all_keys]
     results = await asyncio.gather(*tasks)
 
     removed = 0
     updated = 0
     for key, (valid, balance, error) in zip(all_keys, results):
-        if valid and balance is not None and balance > 0:
+        if valid:
             await db.update_key_balance(key, balance)
             updated += 1
+            logger.info(f"密钥 {key[:4]}**** 更新成功")
         else:
             await db.delete_key(key)
             removed += 1
@@ -602,7 +610,7 @@ async def refresh_single_key(key_data: APIKeyRefresh, authorized: bool = Depends
     
     db = await AsyncDBPool.get_instance()
     
-    if valid and balance is not None and balance > 0:
+    if valid:
         await db.update_key_balance(key, balance)
         invalidate_stats_cache()
         return JSONResponse({"message": "密钥刷新成功", "balance": balance})
