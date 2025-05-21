@@ -27,10 +27,12 @@ async def validate_key_async(api_key: str) -> Tuple[Optional[bool], Optional[flo
     """
     Validate an API key against the Silicon Flow API.
     Returns (is_valid, balance, error_message) tuple:
-    - is_valid: True (valid key), False (invalid key), None (validation failed)
+    - is_valid: True (valid key), False (invalid key or any error)
     - balance: Balance if valid, None otherwise
     - error_message: Error details if validation failed or key is invalid
     """
+    logger.info(f"开始验证API密钥 {api_key[:4]}****")
+    
     # Check if we have a non-expired cache entry
     current_time = time.time()
     cache_key = f"key_{api_key}"
@@ -45,6 +47,7 @@ async def validate_key_async(api_key: str) -> Tuple[Optional[bool], Optional[flo
     headers = {"Authorization": f"Bearer {api_key}"}
     try:
         async with aiohttp.ClientSession() as session:
+            logger.debug(f"发送请求到 {BASE_URL}/v1/user/info")
             async with session.get(
                 f"{BASE_URL}/v1/user/info", headers=headers, timeout=10
             ) as r:
@@ -53,23 +56,19 @@ async def validate_key_async(api_key: str) -> Tuple[Optional[bool], Optional[flo
                     balance = data.get("data", {}).get("totalBalance", 0)
                     result = (True, float(balance), None)
                     logger.info(f"Validated key {api_key[:4]}****: balance={balance}")
-                elif r.status in (401, 403):
-                    data = await r.json()
-                    error_msg = data.get("message", f"Invalid key (status {r.status})")
+                else:
+                    # Treat all non-200 status codes as invalid key, including 500
+                    error_msg = f"Status {r.status}: {await r.text()}"
                     result = (False, None, error_msg)
                     logger.warning(f"Invalid key {api_key[:4]}****: {error_msg}")
-                else:
-                    error_msg = f"Unexpected status {r.status}: {await r.text()}"
-                    result = (None, None, error_msg)
-                    logger.error(f"Validation failed for key {api_key[:4]}****: {error_msg}")
     except aiohttp.ClientError as e:
-        result = (None, None, f"Network error: {str(e)}")
+        result = (False, None, f"Network error: {str(e)}")
         logger.error(f"Network error validating key {api_key[:4]}****: {str(e)}")
     except asyncio.TimeoutError:
-        result = (None, None, "Request timeout")
+        result = (False, None, "Request timeout")
         logger.error(f"Timeout validating key {api_key[:4]}****")
     except Exception as e:
-        result = (None, None, f"Unexpected error: {str(e)}")
+        result = (False, None, f"Unexpected error: {str(e)}")
         logger.error(f"Unexpected error validating key {api_key[:4]}****: {str(e)}")
     
     # Cache only successful results

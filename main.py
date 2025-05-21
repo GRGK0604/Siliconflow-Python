@@ -60,11 +60,13 @@ logger = logging.getLogger("siliconflow")
 # 自动刷新密钥的定时任务
 async def auto_refresh_keys_task():
     """定时自动刷新所有API密钥的余额"""
-    if AUTO_REFRESH_INTERVAL <= 0:
+    # 使用配置中的刷新间隔
+    refresh_interval = AUTO_REFRESH_INTERVAL if AUTO_REFRESH_INTERVAL > 0 else 7200  # 默认7200秒（2小时）
+    if refresh_interval <= 0:
         logger.info("自动刷新密钥功能已禁用")
         return
         
-    logger.info(f"启动自动刷新任务，间隔：{AUTO_REFRESH_INTERVAL}秒")
+    logger.info(f"启动自动刷新任务，间隔：{refresh_interval}秒")
     
     # 限制并发请求数
     MAX_CONCURRENT = 5
@@ -76,7 +78,8 @@ async def auto_refresh_keys_task():
     
     while True:
         try:
-            await asyncio.sleep(AUTO_REFRESH_INTERVAL)
+            logger.info(f"等待 {refresh_interval} 秒后进行下一次刷新...")
+            await asyncio.sleep(refresh_interval)
             logger.info("开始自动刷新API密钥余额...")
             
             db = await AsyncDBPool.get_instance()
@@ -86,6 +89,8 @@ async def auto_refresh_keys_task():
                 logger.info("没有发现API密钥，跳过刷新")
                 continue
                 
+            logger.info(f"发现 {len(all_keys)} 个API密钥，开始验证...")
+            
             # 创建验证任务，限制并发
             tasks = [validate_with_semaphore(key) for key in all_keys]
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -93,28 +98,28 @@ async def auto_refresh_keys_task():
             # 处理结果
             removed = 0
             updated = 0
-            skipped = 0
             for key, result in zip(all_keys, results):
                 if isinstance(result, Exception):
                     logger.error(f"验证密钥 {key[:4]}**** 时发生异常: {str(result)}")
-                    skipped += 1
+                    await db.delete_key(key)  # 异常时也删除密钥
+                    removed += 1
                     continue
                 
                 valid, balance, error = result
                 if valid and balance is not None and balance > 0:
                     await db.update_key_balance(key, balance)
                     updated += 1
-                    logger.info(f"密钥 {key[:4]}**** 更新余额: {balance}")
-                elif valid is False:
+                else:
                     await db.delete_key(key)
                     removed += 1
                     logger.warning(f"密钥 {key[:4]}**** 无效，已删除: {error}")
-                else:
-                    skipped += 1
-                    logger.info(f"密钥 {key[:4]}**** 跳过更新: {error}")
+            
+            # 获取总余额并记录
+            stats = await db.get_stats()
+            total_balance = stats.get("total_balance", 0)
             
             invalidate_stats_cache()
-            logger.info(f"自动刷新完成: 已更新 {updated} 个密钥, 移除 {removed} 个无效密钥, 跳过 {skipped} 个")
+            logger.info(f"自动刷新完成: 已更新 {updated} 个密钥, 移除 {removed} 个无效密钥, 总余额: {total_balance}")
             
         except Exception as e:
             logger.error(f"自动刷新密钥任务出错: {str(e)}")
@@ -128,6 +133,7 @@ async def startup_event():
     await db.initialize()
     
     # 启动自动刷新密钥的后台任务
+    logger.info("启动应用，初始化自动刷新任务...")
     asyncio.create_task(auto_refresh_keys_task())
 
 # Custom exception handlers
@@ -318,23 +324,22 @@ async def refresh_keys(authorized: bool = Depends(require_auth)):
 
     removed = 0
     updated = 0
-    skipped = 0
     for key, (valid, balance, error) in zip(all_keys, results):
         if valid and balance is not None and balance > 0:
             await db.update_key_balance(key, balance)
             updated += 1
-        elif valid is False:
+        else:
             await db.delete_key(key)
             removed += 1
             logger.warning(f"密钥 {key[:4]}**** 无效，已删除: {error}")
-        else:
-            skipped += 1
-            logger.info(f"密钥 {key[:4]}**** 跳过更新: {error}")
+
+    # 获取总余额并记录
+    stats = await db.get_stats()
+    total_balance = stats.get("total_balance", 0)
 
     invalidate_stats_cache()
-
     return JSONResponse(
-        {"message": f"刷新完成: 更新 {updated} 个密钥, 移除 {removed} 个无效密钥, 跳过 {skipped} 个"}
+        {"message": f"刷新完成: 更新 {updated} 个密钥, 移除 {removed} 个无效密钥, 总余额: {total_balance}"}
     )
 
 @app.post("/v1/chat/completions")
@@ -601,12 +606,10 @@ async def refresh_single_key(key_data: APIKeyRefresh, authorized: bool = Depends
         await db.update_key_balance(key, balance)
         invalidate_stats_cache()
         return JSONResponse({"message": "密钥刷新成功", "balance": balance})
-    elif valid is False:
+    else:
         await db.delete_key(key)
         invalidate_stats_cache()
         raise HTTPException(status_code=400, detail=f"密钥无效，已从系统中移除: {error}")
-    else:
-        raise HTTPException(status_code=500, detail=f"密钥刷新失败: {error}")
 
 @app.get("/api/key_info")
 async def get_key_info(key: str, authorized: bool = Depends(require_auth)):

@@ -10,6 +10,6 @@ ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "password")  # You should change this to a secure password
 
 # 自动刷新密钥设置
-# 自动刷新时间间隔（秒），默认3600秒（1小时）
+# 自动刷新时间间隔（秒），默认7200秒（2小时）
 # 设置为0则禁用自动刷新
-AUTO_REFRESH_INTERVAL = int(os.environ.get("AUTO_REFRESH_INTERVAL", "3600"))
+AUTO_REFRESH_INTERVAL = int(os.environ.get("AUTO_REFRESH_INTERVAL", "7200"))
