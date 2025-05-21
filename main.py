@@ -74,7 +74,11 @@ async def auto_refresh_keys_task():
     
     async def validate_with_semaphore(key: str):
         async with semaphore:
-            return await validate_key_async(key)
+            try:
+                return await validate_key_async(key)
+            except Exception as e:
+                logger.error(f"验证密钥 {key[:4]}**** 时发生未捕获异常: {str(e)}")
+                return (False, None, f"验证异常: {str(e)}")
     
     while True:
         try:
@@ -158,7 +162,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
             content={"detail": str(exc.detail)}
         )
     return JSONResponse(
-        status_code=exp.status_code,
+        status_code=exc.status_code,
         content={"detail": str(exc.detail)}
     )
 
