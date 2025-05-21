@@ -138,3 +138,57 @@ docker-compose up -d
 
 5. 验证数据是否成功迁移：
    访问管理面板并检查您的密钥是否正确显示。
+
+## Docker镜像优化说明
+
+本项目提供了极度优化版的Docker镜像，相比原始版本体积显著减小：
+
+1. 采用多阶段构建技术，隔离构建环境和运行环境
+2. 使用Alpine作为基础镜像，大幅减少基础系统体积
+3. 只保留运行必需的Python包，移除所有构建依赖
+4. 清理所有缓存文件、文档和编译生成的中间文件
+5. 仅复制必要的项目文件，排除测试和开发文件
+
+如果您需要自行构建优化版镜像，可以使用以下命令：
+
+```bash
+docker build --platform linux/amd64 -t siliconflow-python:alpine .
+```
+
+优化后的镜像体积能够减少70%以上，同时保持完全相同的功能。
+
+### 镜像体积对比
+
+| 镜像版本 | 基础镜像 | 构建技术 | 预估大小 |
+|---------|---------|---------|---------|
+| 原始版本 | python:3.9-slim | 单阶段构建 | ~400MB |  
+| 优化版本 | python:3.9-alpine | 多阶段构建 | ~120MB |
+
+### 构建并推送到DockerHub
+
+如果您希望将优化后的镜像推送到DockerHub，可以使用以下命令：
+
+```bash
+# 构建镜像 (仅x86_64架构)
+docker build --platform linux/amd64 -t grgk0604/siliconflow-python:latest .
+
+# 推送镜像
+docker push grgk0604/siliconflow-python:latest
+```
+
+#### 特定架构构建说明
+
+默认情况下，上述命令只会构建x86_64(amd64)架构的镜像。如果需要支持其他架构或多架构镜像，请使用以下命令：
+
+```bash
+# 构建多架构镜像 (同时支持amd64和arm64)
+docker buildx build --platform linux/amd64,linux/arm64 -t grgk0604/siliconflow-python:latest . --push
+
+# 仅构建x86_64架构镜像
+docker build --platform linux/amd64 -t grgk0604/siliconflow-python:latest .
+
+# 仅构建arm64架构镜像
+docker build --platform linux/arm64 -t grgk0604/siliconflow-python:arm64 .
+```
+
+使用这个优化后的镜像，您可以更快地部署应用，并节省服务器的存储空间和带宽。

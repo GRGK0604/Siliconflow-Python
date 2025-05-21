@@ -4,4 +4,3 @@ uvicorn
 aiosqlite
 pydantic
 python-multipart
-tenacity
