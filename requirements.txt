@@ -4,3 +4,5 @@ uvicorn
 aiosqlite
 pydantic
 python-multipart
+starlette
+jinja2

@@ -121,14 +121,26 @@ async def stream_response(api_key: str, endpoint: str, request_data: Dict[str, A
             ) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
-                    yield f"data: {{'error': '{error_text}'}}\n\n".encode('utf-8')
+                    try:
+                        error_json = f"data: {error_text}\n\n"
+                    except:
+                        error_json = f"data: {{\"error\": \"API返回错误: HTTP {resp.status}\"}}\n\n"
+                    yield error_json.encode('utf-8')
                     return
                 
                 # Stream the response line by line
                 async for line in resp.content:
                     if line:
                         yield line
+        except aiohttp.ClientError as e:
+            error_json = f"data: {{\"error\": \"连接API失败: {str(e)}\"}}\n\n"
+            yield error_json.encode('utf-8')
+            yield b"data: [DONE]\n\n"
+        except asyncio.TimeoutError:
+            error_json = f"data: {{\"error\": \"请求超时\"}}\n\n"
+            yield error_json.encode('utf-8')
+            yield b"data: [DONE]\n\n"
         except Exception as e:
-            error_json = f"data: {{'error': '{str(e)}'}}\n\n"
+            error_json = f"data: {{\"error\": \"处理请求时发生错误: {str(e)}\"}}\n\n"
             yield error_json.encode('utf-8')
             yield b"data: [DONE]\n\n" 

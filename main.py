@@ -14,9 +14,10 @@ import uuid
 from uvicorn.config import LOGGING_CONFIG
 from typing import Optional, List, Dict, Any, Tuple
 import logging
+import aiosqlite
 
 # Import our new modules
-from db import AsyncDBPool
+from db import AsyncDBPool, DB_PATH
 from models import (
     LoginRequest, APIKeyImport, APIKeyInfo, APIKeyResponse, LogEntry, 
     LogsResponse, StatsResponse, MessageResponse, ErrorResponse, ChatCompletionRequest,
@@ -82,19 +83,21 @@ async def auto_refresh_keys_task():
                 continue
                 
             # 创建并行验证任务
-            tasks = [validate_key_async(key) for key in all_keys]
-            results = await asyncio.gather(*tasks)
-            
-            # 更新数据库
             removed = 0
             updated = 0
-            for key, (valid, balance) in zip(all_keys, results):
-                if valid and float(balance) > 0:
-                    await db.update_key_balance(key, balance)
-                    updated += 1
-                else:
-                    await db.delete_key(key)
-                    removed += 1
+            
+            # 逐个验证密钥，避免一个密钥失败影响所有密钥
+            for key in all_keys:
+                try:
+                    valid, balance = await validate_key_async(key)
+                    if valid and float(balance) > 0:
+                        await db.update_key_balance(key, balance)
+                        updated += 1
+                    else:
+                        await db.delete_key(key)
+                        removed += 1
+                except Exception as e:
+                    logger.error(f"刷新密钥 {key[:8]}*** 时出错: {str(e)}")
             
             # 使统计缓存失效
             invalidate_stats_cache()
@@ -114,6 +117,9 @@ async def startup_event():
     
     # 启动自动刷新密钥的后台任务
     asyncio.create_task(auto_refresh_keys_task())
+    
+    # 启动数据库维护任务
+    asyncio.create_task(db_maintenance_task())
 
 # Custom exception handlers
 @app.exception_handler(StarletteHTTPException)
@@ -387,7 +393,10 @@ async def chat_completions(request: Request, background_tasks: BackgroundTasks):
     background_tasks.add_task(db.increment_key_usage, selected_key)
     
     # 解析请求体
-    body = await request.json()
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="无效的JSON请求体")
     
     # 获取模型名称，确保它不为空
     model = body.get("model", "")
@@ -482,6 +491,8 @@ async def chat_completions(request: Request, background_tasks: BackgroundTasks):
             )
             
             return JSONResponse(response_data)
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"请求处理失败: {str(e)}")
 
@@ -717,16 +728,17 @@ async def get_key_info(key: str, authorized: bool = Depends(require_auth)):
 # Add a general exception handler for uncaught exceptions
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    # Log the error here if needed
-    print(f"Unhandled exception: {str(exc)}")
+    # 记录详细的错误信息
+    error_msg = f"路径: {request.url.path}, 方法: {request.method}, 错误: {str(exc)}"
+    logger.error(f"未处理的异常: {error_msg}")
     
-    # For API endpoints, return JSON error
+    # 对于API端点，返回JSON错误
     if request.url.path.startswith("/v1/") or request.headers.get("accept") == "application/json":
         return JSONResponse(
             status_code=500,
             content={"detail": "服务器内部错误"}
         )
-    # For web pages, return the 500 error page
+    # 对于网页，返回500错误页面
     return FileResponse("static/500.html", status_code=500)
 
 
@@ -896,6 +908,66 @@ async def get_monthly_stats(authorized: bool = Depends(require_auth)):
         "model_labels": model_labels,
         "model_tokens": model_tokens
     })
+
+
+@app.get("/health")
+async def health_check():
+    """健康检查端点，用于监控系统状态"""
+    try:
+        # 检查数据库连接
+        db = await AsyncDBPool.get_instance()
+        await db.execute("SELECT 1", fetch_one=True)
+        
+        # 检查是否有可用的API密钥
+        keys = await db.get_key_list()
+        key_status = "available" if keys else "unavailable"
+        
+        return JSONResponse({
+            "status": "healthy",
+            "database": "connected",
+            "api_keys": key_status,
+            "timestamp": time.time()
+        })
+    except Exception as e:
+        logger.error(f"健康检查失败: {str(e)}")
+        return JSONResponse({
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": time.time()
+        }, status_code=500)
+
+
+async def db_maintenance_task():
+    """定期数据库维护任务"""
+    logger.info("启动数据库维护任务")
+    
+    while True:
+        try:
+            # 每24小时执行一次维护
+            await asyncio.sleep(24 * 60 * 60)
+            
+            logger.info("开始执行数据库维护...")
+            
+            # 获取数据库实例
+            db = await AsyncDBPool.get_instance()
+            
+            # 清理过期会话
+            await db.cleanup_old_sessions()
+            
+            # 执行VACUUM优化数据库
+            try:
+                async with aiosqlite.connect(DB_PATH) as conn:
+                    await conn.execute("VACUUM")
+                    await conn.commit()
+                logger.info("数据库VACUUM完成")
+            except Exception as e:
+                logger.error(f"数据库VACUUM失败: {str(e)}")
+            
+            logger.info("数据库维护完成")
+            
+        except Exception as e:
+            logger.error(f"数据库维护任务出错: {str(e)}")
+            await asyncio.sleep(60 * 60)  # 出错后等待一小时再试
 
 
 if __name__ == "__main__":

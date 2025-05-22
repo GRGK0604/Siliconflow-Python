@@ -23,6 +23,9 @@ class AsyncDBPool:
     
     async def initialize(self):
         """Initialize the database and create tables if they don't exist."""
+        # 确保数据目录存在
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        
         async with aiosqlite.connect(DB_PATH) as db:
             # Enable WAL mode for better concurrency
             await db.execute("PRAGMA journal_mode=WAL")
@@ -72,16 +75,32 @@ class AsyncDBPool:
     
     async def execute(self, query: str, params: tuple = (), fetch_one: bool = False, fetch_all: bool = False) -> Any:
         """Execute a SQL query and optionally fetch results."""
-        async with aiosqlite.connect(DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(query, params) as cursor:
-                if fetch_one:
-                    return await cursor.fetchone()
-                elif fetch_all:
-                    return await cursor.fetchall()
-                else:
-                    await db.commit()
-                    return cursor.lastrowid
+        max_retries = 3
+        retry_count = 0
+        retry_delay = 0.5  # 初始延迟0.5秒
+        
+        while retry_count < max_retries:
+            try:
+                async with aiosqlite.connect(DB_PATH, timeout=10) as db:
+                    db.row_factory = aiosqlite.Row
+                    async with db.execute(query, params) as cursor:
+                        if fetch_one:
+                            return await cursor.fetchone()
+                        elif fetch_all:
+                            return await cursor.fetchall()
+                        else:
+                            await db.commit()
+                            return cursor.lastrowid
+            except aiosqlite.OperationalError as e:
+                # 数据库锁定或其他操作错误，尝试重试
+                retry_count += 1
+                if retry_count >= max_retries:
+                    raise
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2  # 指数退避
+            except Exception as e:
+                # 其他错误直接抛出
+                raise
     
     async def get_all_keys(self) -> List[Dict[str, Any]]:
         """Get all API keys from the database."""
@@ -228,4 +247,12 @@ class AsyncDBPool:
     async def clear_logs(self) -> None:
         """Clear all logs from the database."""
         await self.execute("DELETE FROM logs")
-        # Note: VACUUM is not supported in aiosqlite in the same way as in sqlite3 
+        # 执行VACUUM优化数据库空间
+        try:
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute("VACUUM")
+                await db.commit()
+        except Exception as e:
+            # 如果VACUUM失败，记录错误但不阻止清理日志的操作完成
+            print(f"执行VACUUM时出错: {str(e)}")
+            pass 
