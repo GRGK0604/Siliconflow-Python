@@ -13,6 +13,7 @@ BASE_URL = "https://api.siliconflow.cn"
 API_KEY_CACHE = {}
 API_KEY_CACHE_TTL = 60  # seconds
 CACHE_MAX_SIZE = 1000  # 最大缓存条目数
+_cache_lock = asyncio.Lock()  # 缓存操作锁
 
 # Cache for stats
 STATS_CACHE = {}
@@ -61,26 +62,33 @@ async def get_session():
 
 async def cleanup_cache():
     """清理过期的缓存条目"""
-    current_time = time.time()
-    expired_keys = []
-    
-    for cache_key, (timestamp, _) in API_KEY_CACHE.items():
-        if current_time - timestamp > API_KEY_CACHE_TTL:
-            expired_keys.append(cache_key)
-    
-    for key in expired_keys:
-        del API_KEY_CACHE[key]
-    
-    # 如果缓存太大，删除最旧的条目
-    if len(API_KEY_CACHE) > CACHE_MAX_SIZE:
-        # 按时间戳排序，删除最旧的条目
-        sorted_items = sorted(API_KEY_CACHE.items(), key=lambda x: x[1][0])
-        items_to_remove = len(sorted_items) - CACHE_MAX_SIZE + 100  # 多删除一些，避免频繁清理
-        
-        for i in range(items_to_remove):
-            del API_KEY_CACHE[sorted_items[i][0]]
-        
-        logger.info(f"缓存清理完成，删除了 {len(expired_keys)} 个过期条目和 {items_to_remove} 个旧条目")
+    async with _cache_lock:
+        current_time = time.time()
+        expired_keys = []
+
+        # 创建缓存副本以避免在迭代时修改字典
+        cache_items = list(API_KEY_CACHE.items())
+
+        for cache_key, (timestamp, _) in cache_items:
+            if current_time - timestamp > API_KEY_CACHE_TTL:
+                expired_keys.append(cache_key)
+
+        # 删除过期条目
+        for key in expired_keys:
+            API_KEY_CACHE.pop(key, None)
+
+        # 如果缓存太大，删除最旧的条目
+        items_to_remove = 0
+        if len(API_KEY_CACHE) > CACHE_MAX_SIZE:
+            # 按时间戳排序，删除最旧的条目
+            sorted_items = sorted(API_KEY_CACHE.items(), key=lambda x: x[1][0])
+            items_to_remove = len(sorted_items) - CACHE_MAX_SIZE + 100  # 多删除一些，避免频繁清理
+
+            for i in range(min(items_to_remove, len(sorted_items))):
+                API_KEY_CACHE.pop(sorted_items[i][0], None)
+
+        if expired_keys or items_to_remove > 0:
+            logger.info(f"缓存清理完成，删除了 {len(expired_keys)} 个过期条目和 {items_to_remove} 个旧条目")
 
 async def validate_key_async(api_key: str, max_retries: int = 3) -> Tuple[bool, Any]:
     """
@@ -96,9 +104,9 @@ async def validate_key_async(api_key: str, max_retries: int = 3) -> Tuple[bool, 
         if current_time - timestamp < API_KEY_CACHE_TTL:
             return result
     
-    # 定期清理缓存
+    # 定期清理缓存（避免在锁内进行，减少阻塞）
     if len(API_KEY_CACHE) % 50 == 0:  # 每50次调用清理一次
-        await cleanup_cache()
+        asyncio.create_task(cleanup_cache())
     
     # No valid cache entry, make the API call with retry
     headers = {"Authorization": f"Bearer {api_key}"}
@@ -166,9 +174,9 @@ def invalidate_stats_cache() -> None:
     STATS_CACHE_TIME = 0
 
 async def make_api_request(
-    endpoint: str, 
-    api_key: str, 
-    method: str = "GET", 
+    endpoint: str,
+    api_key: str,
+    method: str = "GET",
     data: Optional[Dict[str, Any]] = None,
     headers: Optional[Dict[str, str]] = None,
     timeout: int = 30
@@ -178,33 +186,38 @@ async def make_api_request(
     Returns (status_code, response_data) tuple.
     """
     url = f"{BASE_URL}{endpoint}"
-    
+
     # Setup headers
     request_headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
-    
+
     # Add additional headers if provided
     if headers:
         request_headers.update(headers)
-    
+
     try:
-        async with aiohttp.ClientSession() as session:
-            if method.upper() == "GET":
-                async with session.get(url, headers=request_headers, timeout=timeout) as resp:
-                    status = resp.status
-                    data = await resp.json()
-            elif method.upper() == "POST":
-                async with session.post(
-                    url, headers=request_headers, json=data, timeout=timeout
-                ) as resp:
-                    status = resp.status
-                    data = await resp.json()
-            else:
-                return 400, {"error": f"Unsupported method: {method}"}
-                
-            return status, data
+        # 使用全局session而不是创建新的session
+        session = await get_session()
+        if method.upper() == "GET":
+            async with session.get(url, headers=request_headers, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                status = resp.status
+                data = await resp.json()
+        elif method.upper() == "POST":
+            async with session.post(
+                url, headers=request_headers, json=data, timeout=aiohttp.ClientTimeout(total=timeout)
+            ) as resp:
+                status = resp.status
+                data = await resp.json()
+        else:
+            return 400, {"error": f"Unsupported method: {method}"}
+
+        return status, data
+    except aiohttp.ClientError as e:
+        return 500, {"error": f"网络请求失败: {str(e)}"}
+    except asyncio.TimeoutError:
+        return 500, {"error": "请求超时"}
     except Exception as e:
         return 500, {"error": f"API request failed: {str(e)}"}
 
@@ -215,34 +228,35 @@ async def stream_response(api_key: str, endpoint: str, request_data: Dict[str, A
     Yields chunks of data as they arrive.
     """
     url = f"{BASE_URL}{endpoint}"
-    
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.post(
-                url, headers=headers, json=request_data, timeout=300
-            ) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    try:
-                        error_json = f"data: {error_text}\n\n"
-                    except:
-                        error_json = f"data: {{\"error\": \"API返回错误: HTTP {resp.status}\"}}\n\n"
-                    yield error_json.encode('utf-8')
-                    return
-                
-                # Stream the response line by line
-                async for line in resp.content:
-                    if line:
-                        yield line
-        except aiohttp.ClientError as e:
-            error_json = f"data: {{\"error\": \"连接API失败: {str(e)}\"}}\n\n"
-            yield error_json.encode('utf-8')
-            yield b"data: [DONE]\n\n"
-        except asyncio.TimeoutError:
-            error_json = f"data: {{\"error\": \"请求超时\"}}\n\n"
-            yield error_json.encode('utf-8')
-            yield b"data: [DONE]\n\n"
-        except Exception as e:
-            error_json = f"data: {{\"error\": \"处理请求时发生错误: {str(e)}\"}}\n\n"
-            yield error_json.encode('utf-8')
-            yield b"data: [DONE]\n\n" 
+
+    try:
+        # 使用全局session而不是创建新的session
+        session = await get_session()
+        async with session.post(
+            url, headers=headers, json=request_data, timeout=aiohttp.ClientTimeout(total=300)
+        ) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                try:
+                    error_json = f"data: {error_text}\n\n"
+                except:
+                    error_json = f"data: {{\"error\": \"API返回错误: HTTP {resp.status}\"}}\n\n"
+                yield error_json.encode('utf-8')
+                return
+
+            # Stream the response line by line
+            async for line in resp.content:
+                if line:
+                    yield line
+    except aiohttp.ClientError as e:
+        error_json = f"data: {{\"error\": \"连接API失败: {str(e)}\"}}\n\n"
+        yield error_json.encode('utf-8')
+        yield b"data: [DONE]\n\n"
+    except asyncio.TimeoutError:
+        error_json = f"data: {{\"error\": \"请求超时\"}}\n\n"
+        yield error_json.encode('utf-8')
+        yield b"data: [DONE]\n\n"
+    except Exception as e:
+        error_json = f"data: {{\"error\": \"处理请求时发生错误: {str(e)}\"}}\n\n"
+        yield error_json.encode('utf-8')
+        yield b"data: [DONE]\n\n"

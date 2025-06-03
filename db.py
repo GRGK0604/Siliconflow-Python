@@ -115,8 +115,11 @@ class AsyncDBPool:
     async def get_best_keys(self, limit: int = 10) -> List[str]:
         """Get the best API keys based on balance and usage count."""
         rows = await self.execute(
-            "SELECT key FROM api_keys ORDER BY (balance / (usage_count + 1)) DESC LIMIT ?", 
-            (limit,), 
+            """SELECT key FROM api_keys
+               WHERE balance > 0
+               ORDER BY (balance / (usage_count + 1)) DESC, balance DESC
+               LIMIT ?""",
+            (limit,),
             fetch_all=True
         )
         return [row['key'] for row in rows] if rows else []

@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from config import API_KEY, ADMIN_USERNAME, ADMIN_PASSWORD, AUTO_REFRESH_INTERVAL
 import json
 import random
@@ -32,10 +33,73 @@ LOGGING_CONFIG["formatters"]["default"]["fmt"] = (
     "%(asctime)s - %(levelprefix)s %(message)s"
 )
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    global _monitor_task, _db_maintenance_task
+
+    # 启动时的初始化
+    logger.info("应用启动，开始初始化...")
+
+    # Initialize the database
+    db = await AsyncDBPool.get_instance()
+    await db.initialize()
+
+    # 启动自动刷新密钥的后台任务
+    await start_auto_refresh_task()
+
+    # 启动自动刷新任务监控器
+    _monitor_task = asyncio.create_task(monitor_auto_refresh_task())
+
+    # 启动数据库维护任务
+    _db_maintenance_task = asyncio.create_task(db_maintenance_task())
+
+    logger.info("应用初始化完成")
+
+    yield  # 应用运行期间
+
+    # 关闭时的清理工作
+    logger.info("开始应用关闭清理...")
+
+    # 标记自动刷新任务停止
+    AUTO_REFRESH_TASK_STATUS["running"] = False
+
+    # 取消所有后台任务
+    tasks_to_cancel = []
+    if _auto_refresh_task and not _auto_refresh_task.done():
+        tasks_to_cancel.append(_auto_refresh_task)
+    if _monitor_task and not _monitor_task.done():
+        tasks_to_cancel.append(_monitor_task)
+    if _db_maintenance_task and not _db_maintenance_task.done():
+        tasks_to_cancel.append(_db_maintenance_task)
+
+    for task in tasks_to_cancel:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"取消任务时出错: {str(e)}")
+
+    # 清理utils模块中的全局session
+    try:
+        from utils import _session, _connector
+        if _session and not _session.closed:
+            await _session.close()
+        if _connector:
+            await _connector.close()
+        logger.info("网络连接已清理")
+    except Exception as e:
+        logger.error(f"清理网络连接时出错: {str(e)}")
+
+    logger.info("应用关闭清理完成")
+
 app = FastAPI(
     title="SiliconFlow API",
     description="A proxy server for the Silicon Flow API with key management",
-    version="2.0.0"
+    version="2.0.0",
+    lifespan=lifespan
 )
 
 # Add CORS middleware
@@ -71,128 +135,143 @@ AUTO_REFRESH_TASK_STATUS = {
     "last_batch_stats": {}
 }
 
+# 任务实例管理
+_auto_refresh_task = None
+_monitor_task = None
+_db_maintenance_task = None
+_task_lock = asyncio.Lock()
+
+# 重复的 lifespan 函数已删除
+
 # 自动刷新密钥的定时任务
 async def auto_refresh_keys_task():
     """定时自动刷新所有API密钥的余额"""
+    global _auto_refresh_task
+
     # 如果设置为0，则禁用自动刷新
     if AUTO_REFRESH_INTERVAL <= 0:
         logger.info("自动刷新密钥功能已禁用")
         return
-        
+
     logger.info(f"启动自动刷新任务，间隔：{AUTO_REFRESH_INTERVAL}秒")
-    
-    # 更新任务状态
-    AUTO_REFRESH_TASK_STATUS["running"] = True
-    AUTO_REFRESH_TASK_STATUS["last_error"] = None
-    
-    while True:
-        try:
-            # 每隔配置的时间执行一次刷新
-            await asyncio.sleep(AUTO_REFRESH_INTERVAL)
-            
-            logger.info("开始自动刷新API密钥余额...")
-            batch_start_time = time.time()
-            
-            # 更新运行状态
-            AUTO_REFRESH_TASK_STATUS["run_count"] += 1
-            AUTO_REFRESH_TASK_STATUS["last_run_time"] = time.time()
-            
-            # 获取所有密钥
-            db = await AsyncDBPool.get_instance()
-            all_keys = await db.get_key_list()
-            
-            if not all_keys:
-                logger.info("没有发现API密钥，跳过刷新")
-                continue
-            
-            AUTO_REFRESH_TASK_STATUS["total_keys_processed"] += len(all_keys)
-            
-            # 使用并发处理密钥验证，但限制并发数避免过载
-            removed = 0
-            updated = 0
-            error_count = 0
-            
-            # 分批处理密钥，每批最多10个并发
-            batch_size = 10
-            for i in range(0, len(all_keys), batch_size):
-                batch_keys = all_keys[i:i + batch_size]
-                
-                # 创建并发验证任务
-                tasks = []
-                for key in batch_keys:
-                    tasks.append(validate_and_update_key(key, db))
-                
-                # 等待当前批次完成
-                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-                
-                # 处理结果
-                for j, result in enumerate(batch_results):
-                    if isinstance(result, Exception):
-                        error_count += 1
-                        logger.error(f"刷新密钥 {batch_keys[j][:8]}*** 时出错: {str(result)}")
-                    else:
-                        action, success = result
-                        if success:
-                            if action == "updated":
-                                updated += 1
-                            elif action == "removed":
-                                removed += 1
-                        else:
+
+    try:
+        # 更新任务状态
+        AUTO_REFRESH_TASK_STATUS["running"] = True
+        AUTO_REFRESH_TASK_STATUS["last_error"] = None
+
+        while True:
+            try:
+                # 每隔配置的时间执行一次刷新
+                await asyncio.sleep(AUTO_REFRESH_INTERVAL)
+
+                logger.info("开始自动刷新API密钥余额...")
+                batch_start_time = time.time()
+
+                # 更新运行状态
+                AUTO_REFRESH_TASK_STATUS["run_count"] += 1
+                AUTO_REFRESH_TASK_STATUS["last_run_time"] = time.time()
+
+                # 获取所有密钥
+                db = await AsyncDBPool.get_instance()
+                all_keys = await db.get_key_list()
+
+                if not all_keys:
+                    logger.info("没有发现API密钥，跳过刷新")
+                    continue
+
+                AUTO_REFRESH_TASK_STATUS["total_keys_processed"] += len(all_keys)
+
+                # 使用并发处理密钥验证，但限制并发数避免过载
+                removed = 0
+                updated = 0
+                error_count = 0
+
+                # 分批处理密钥，每批最多10个并发
+                batch_size = 10
+                for i in range(0, len(all_keys), batch_size):
+                    batch_keys = all_keys[i:i + batch_size]
+
+                    # 创建并发验证任务
+                    tasks = []
+                    for key in batch_keys:
+                        tasks.append(validate_and_update_key(key, db))
+
+                    # 等待当前批次完成
+                    batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                    # 处理结果
+                    for j, result in enumerate(batch_results):
+                        if isinstance(result, Exception):
                             error_count += 1
-                
-                # 在批次之间稍作延迟，避免API限制
-                if i + batch_size < len(all_keys):
-                    await asyncio.sleep(0.5)
-                
-                # 如果错误过多，增加延迟
-                if error_count > len(all_keys) * 0.5:  # 超过50%的错误率
-                    logger.warning("错误率过高，增加延迟...")
-                    await asyncio.sleep(10)
-                    break
-            
-            # 更新统计信息
-            AUTO_REFRESH_TASK_STATUS["total_keys_updated"] += updated
-            AUTO_REFRESH_TASK_STATUS["total_keys_removed"] += removed
-            
-            # 计算处理时间
-            processing_time = time.time() - batch_start_time
-            if AUTO_REFRESH_TASK_STATUS["run_count"] == 1:
-                AUTO_REFRESH_TASK_STATUS["average_processing_time"] = processing_time
-            else:
-                # 使用移动平均
-                current_avg = AUTO_REFRESH_TASK_STATUS["average_processing_time"]
-                AUTO_REFRESH_TASK_STATUS["average_processing_time"] = (current_avg * 0.8) + (processing_time * 0.2)
-            
-            # 记录本次批处理统计
-            AUTO_REFRESH_TASK_STATUS["last_batch_stats"] = {
-                "processed": len(all_keys),
-                "updated": updated,
-                "removed": removed,
-                "errors": error_count,
-                "processing_time": processing_time,
-                "timestamp": time.time()
-            }
-            
-            # 使统计缓存失效
-            invalidate_stats_cache()
-            
-            logger.info(f"自动刷新完成: 已更新 {updated} 个密钥, 移除 {removed} 个无效密钥, 错误 {error_count} 个, 耗时 {processing_time:.2f} 秒")
-            
-        except asyncio.CancelledError:
-            logger.info("自动刷新任务被取消")
-            AUTO_REFRESH_TASK_STATUS["running"] = False
-            break
-        except Exception as e:
-            AUTO_REFRESH_TASK_STATUS["error_count"] += 1
-            AUTO_REFRESH_TASK_STATUS["last_error"] = str(e)
-            logger.error(f"自动刷新密钥任务出错: {str(e)}")
-            
-            # 如果错误次数过多，增加等待时间
-            error_delay = min(300, 60 * AUTO_REFRESH_TASK_STATUS["error_count"])  # 最多等待5分钟
-            logger.info(f"由于错误，将等待 {error_delay} 秒后重试")
-            await asyncio.sleep(error_delay)
-    
-    AUTO_REFRESH_TASK_STATUS["running"] = False
+                            logger.error(f"刷新密钥 {batch_keys[j][:8]}*** 时出错: {str(result)}")
+                        else:
+                            action, success = result
+                            if success:
+                                if action == "updated":
+                                    updated += 1
+                                elif action == "removed":
+                                    removed += 1
+                            else:
+                                error_count += 1
+
+                    # 在批次之间稍作延迟，避免API限制
+                    if i + batch_size < len(all_keys):
+                        await asyncio.sleep(0.5)
+
+                    # 如果错误过多，记录警告但继续处理
+                    if error_count > len(batch_keys) * 0.8:  # 当前批次错误率超过80%
+                        logger.warning(f"当前批次错误率过高: {error_count}/{len(batch_keys)}")
+                        await asyncio.sleep(2)  # 稍作延迟
+
+                # 更新统计信息
+                AUTO_REFRESH_TASK_STATUS["total_keys_updated"] += updated
+                AUTO_REFRESH_TASK_STATUS["total_keys_removed"] += removed
+
+                # 计算处理时间
+                processing_time = time.time() - batch_start_time
+                if AUTO_REFRESH_TASK_STATUS["run_count"] == 1:
+                    AUTO_REFRESH_TASK_STATUS["average_processing_time"] = processing_time
+                else:
+                    # 使用移动平均
+                    current_avg = AUTO_REFRESH_TASK_STATUS["average_processing_time"]
+                    AUTO_REFRESH_TASK_STATUS["average_processing_time"] = (current_avg * 0.8) + (processing_time * 0.2)
+
+                # 记录本次批处理统计
+                AUTO_REFRESH_TASK_STATUS["last_batch_stats"] = {
+                    "processed": len(all_keys),
+                    "updated": updated,
+                    "removed": removed,
+                    "errors": error_count,
+                    "processing_time": processing_time,
+                    "timestamp": time.time()
+                }
+
+                # 使统计缓存失效
+                invalidate_stats_cache()
+
+                logger.info(f"自动刷新完成: 已更新 {updated} 个密钥, 移除 {removed} 个无效密钥, 错误 {error_count} 个, 耗时 {processing_time:.2f} 秒")
+
+            except asyncio.CancelledError:
+                logger.info("自动刷新任务被取消")
+                AUTO_REFRESH_TASK_STATUS["running"] = False
+                break
+            except Exception as e:
+                AUTO_REFRESH_TASK_STATUS["error_count"] += 1
+                AUTO_REFRESH_TASK_STATUS["last_error"] = str(e)
+                logger.error(f"自动刷新密钥任务出错: {str(e)}")
+
+                # 如果错误次数过多，增加等待时间
+                error_delay = min(300, 60 * AUTO_REFRESH_TASK_STATUS["error_count"])  # 最多等待5分钟
+                logger.info(f"由于错误，将等待 {error_delay} 秒后重试")
+                await asyncio.sleep(error_delay)
+
+    except Exception as e:
+        logger.error(f"自动刷新任务异常退出: {str(e)}")
+        AUTO_REFRESH_TASK_STATUS["last_error"] = str(e)
+    finally:
+        AUTO_REFRESH_TASK_STATUS["running"] = False
+        _auto_refresh_task = None
 
 async def validate_and_update_key(key: str, db) -> tuple:
     """验证并更新单个密钥的辅助函数"""
@@ -211,73 +290,68 @@ async def validate_and_update_key(key: str, db) -> tuple:
 # 监控自动刷新任务的状态
 async def monitor_auto_refresh_task():
     """监控自动刷新任务，如果任务停止则重新启动"""
+    global _auto_refresh_task, _monitor_task
+
     logger.info("启动自动刷新任务监控器")
-    
+
     while True:
         try:
             await asyncio.sleep(300)  # 每5分钟检查一次
-            
+
             # 检查自动刷新功能是否启用
             if AUTO_REFRESH_INTERVAL <= 0:
                 continue
-            
+
             current_time = time.time()
             last_run_time = AUTO_REFRESH_TASK_STATUS["last_run_time"]
-            
-            # 如果任务没有运行，或者上次运行时间超过了2倍的刷新间隔
-            if (not AUTO_REFRESH_TASK_STATUS["running"] or 
-                (last_run_time > 0 and current_time - last_run_time > AUTO_REFRESH_INTERVAL * 2)):
-                
-                logger.warning("检测到自动刷新任务可能已停止，正在重新启动...")
-                
-                # 重置状态
-                AUTO_REFRESH_TASK_STATUS["running"] = False
-                AUTO_REFRESH_TASK_STATUS["error_count"] = 0
-                
-                # 启动新的自动刷新任务
-                asyncio.create_task(auto_refresh_keys_task())
-                logger.info("自动刷新任务已重新启动")
-                
+
+            # 检查任务是否需要重启
+            should_restart = False
+
+            # 如果任务没有运行
+            if not AUTO_REFRESH_TASK_STATUS["running"]:
+                should_restart = True
+                reason = "任务未运行"
+            # 如果任务实例不存在或已完成
+            elif _auto_refresh_task is None or _auto_refresh_task.done():
+                should_restart = True
+                reason = "任务实例已完成"
+            # 如果上次运行时间超过了2倍的刷新间隔
+            elif last_run_time > 0 and current_time - last_run_time > AUTO_REFRESH_INTERVAL * 2:
+                should_restart = True
+                reason = f"任务超时未运行 ({current_time - last_run_time:.0f}秒)"
+
+            if should_restart:
+                logger.warning(f"检测到自动刷新任务需要重启: {reason}")
+                await start_auto_refresh_task()
+
         except Exception as e:
             logger.error(f"自动刷新任务监控器出错: {str(e)}")
             await asyncio.sleep(60)  # 出错后等待1分钟
 
-# Initialize the database on startup
-@app.on_event("startup")
-async def startup_event():
-    # Initialize the database
-    db = await AsyncDBPool.get_instance()
-    await db.initialize()
-    
-    # 启动自动刷新密钥的后台任务
-    asyncio.create_task(auto_refresh_keys_task())
-    
-    # 启动自动刷新任务监控器
-    asyncio.create_task(monitor_auto_refresh_task())
-    
-    # 启动数据库维护任务
-    asyncio.create_task(db_maintenance_task())
+async def start_auto_refresh_task():
+    """安全地启动自动刷新任务"""
+    global _auto_refresh_task
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """应用关闭时的清理工作"""
-    logger.info("开始应用关闭清理...")
-    
-    # 标记自动刷新任务停止
-    AUTO_REFRESH_TASK_STATUS["running"] = False
-    
-    # 清理utils模块中的全局session
-    try:
-        from utils import _session, _connector
-        if _session and not _session.closed:
-            await _session.close()
-        if _connector:
-            await _connector.close()
-        logger.info("网络连接已清理")
-    except Exception as e:
-        logger.error(f"清理网络连接时出错: {str(e)}")
-    
-    logger.info("应用关闭清理完成")
+    async with _task_lock:
+        # 如果已有任务在运行，先取消
+        if _auto_refresh_task and not _auto_refresh_task.done():
+            _auto_refresh_task.cancel()
+            try:
+                await _auto_refresh_task
+            except asyncio.CancelledError:
+                pass
+
+        # 重置状态
+        AUTO_REFRESH_TASK_STATUS["running"] = False
+        AUTO_REFRESH_TASK_STATUS["error_count"] = 0
+        AUTO_REFRESH_TASK_STATUS["last_error"] = None
+
+        # 启动新任务
+        _auto_refresh_task = asyncio.create_task(auto_refresh_keys_task())
+        logger.info("自动刷新任务已启动")
+
+# 旧的事件处理器已被 lifespan 处理器替代
 
 # Custom exception handlers
 @app.exception_handler(StarletteHTTPException)
@@ -458,8 +532,12 @@ async def import_keys(key_data: APIKeyImport, authorized: bool = Depends(require
     tasks = []
     for key in keys:
         if key in duplicate_keys:
-            # Skip validation for duplicate keys
-            tasks.append(asyncio.sleep(0, result=("duplicate", key)))
+            # Skip validation for duplicate keys - create a coroutine that returns the result
+            async def create_duplicate_result(captured_key):
+                async def duplicate_result():
+                    return ("duplicate", captured_key)
+                return duplicate_result()
+            tasks.append(create_duplicate_result(key))
         else:
             tasks.append(validate_key_async(key))
     
@@ -469,14 +547,15 @@ async def import_keys(key_data: APIKeyImport, authorized: bool = Depends(require
     imported_count = 0
     duplicate_count = len(duplicate_keys)
     invalid_count = 0
-    
+
     for idx, result in enumerate(results):
+        current_key = keys[idx]
         if isinstance(result, tuple) and result[0] == "duplicate":
             continue
         else:
             valid, balance = result
             if valid and float(balance) > 0:
-                await db.insert_api_key(keys[idx], balance)
+                await db.insert_api_key(current_key, balance)
                 imported_count += 1
             else:
                 invalid_count += 1
@@ -681,15 +760,16 @@ async def embeddings(request: Request, background_tasks: BackgroundTasks):
     forward_headers["Authorization"] = f"Bearer {selected}"
     
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{BASE_URL}/v1/embeddings",
-                headers=forward_headers,
-                data=await request.body(),
-                timeout=30,
-            ) as resp:
-                data = await resp.json()
-                return JSONResponse(content=data, status_code=resp.status)
+        from utils import get_session
+        session = await get_session()
+        async with session.post(
+            f"{BASE_URL}/v1/embeddings",
+            headers=forward_headers,
+            data=await request.body(),
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as resp:
+            data = await resp.json()
+            return JSONResponse(content=data, status_code=resp.status)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"请求转发失败: {str(e)}")
 
@@ -711,12 +791,13 @@ async def list_models(request: Request):
     forward_headers["Authorization"] = f"Bearer {selected}"
     
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{BASE_URL}/v1/models", headers=forward_headers, timeout=30
-            ) as resp:
-                data = await resp.json()
-                return JSONResponse(content=data, status_code=resp.status)
+        from utils import get_session
+        session = await get_session()
+        async with session.get(
+            f"{BASE_URL}/v1/models", headers=forward_headers, timeout=aiohttp.ClientTimeout(total=30)
+        ) as resp:
+            data = await resp.json()
+            return JSONResponse(content=data, status_code=resp.status)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"请求转发失败: {str(e)}")
 
@@ -727,7 +808,7 @@ async def stats_overview(authorized: bool = Depends(require_auth)):
     db = await AsyncDBPool.get_instance()
     stats_data = await db.get_stats()
     
-    return JSONResponse(StatsResponse(**stats_data).dict())
+    return JSONResponse(StatsResponse(**stats_data).model_dump())
 
 
 @app.get("/export_keys")
@@ -769,7 +850,7 @@ async def get_logs(
         total=total,
         page=page,
         page_size=10
-    ).dict())
+    ).model_dump())
 
 
 @app.post("/clear_logs")
@@ -828,11 +909,11 @@ async def get_keys(
         ))
 
     return JSONResponse(APIKeyResponse(
-        keys=key_list, 
-        total=total, 
-        page=page, 
+        keys=key_list,
+        total=total,
+        page=page,
         page_size=page_size
-    ).dict())
+    ).model_dump())
 
 @app.post("/api/refresh_key")
 async def refresh_single_key(key_data: APIKeyRefresh, authorized: bool = Depends(require_auth)):
@@ -1146,17 +1227,12 @@ async def restart_auto_refresh(authorized: bool = Depends(require_auth)):
                 "message": "自动刷新功能已禁用",
                 "success": False
             })
-        
-        # 重置任务状态
-        AUTO_REFRESH_TASK_STATUS["running"] = False
-        AUTO_REFRESH_TASK_STATUS["error_count"] = 0
-        AUTO_REFRESH_TASK_STATUS["last_error"] = None
-        
-        # 启动新的自动刷新任务
-        asyncio.create_task(auto_refresh_keys_task())
-        
+
+        # 使用安全的重启函数
+        await start_auto_refresh_task()
+
         logger.info("手动重启自动刷新任务")
-        
+
         return JSONResponse({
             "message": "自动刷新任务已重启",
             "success": True
