@@ -532,12 +532,10 @@ async def import_keys(key_data: APIKeyImport, authorized: bool = Depends(require
     tasks = []
     for key in keys:
         if key in duplicate_keys:
-            # Skip validation for duplicate keys - create a coroutine that returns the result
-            async def create_duplicate_result(captured_key):
-                async def duplicate_result():
-                    return ("duplicate", captured_key)
-                return duplicate_result()
-            tasks.append(create_duplicate_result(key))
+            # 为重复密钥创建一个已完成的Future对象
+            future = asyncio.Future()
+            future.set_result(("duplicate", key))
+            tasks.append(future)
         else:
             tasks.append(validate_key_async(key))
     
