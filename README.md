@@ -298,22 +298,17 @@ curl http://localhost:7898/health
 
 MIT License
 
+## 界面截图
+
+### 登录页面
+![登录页](./doc/login.png)
+
+### 管理页面
+![管理页](./doc/admin.png)
+
+### 密钥管理页面
+![密钥页](./doc/keylists.png)
+
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request！
-
-## 更新日志
-
-### v2.0.0
-- ✅ 添加所有 SiliconFlow API 端点支持
-- ✅ 新增 Anthropic Claude 对话接口
-- ✅ 支持图像生成、语音处理、视频生成
-- ✅ 添加批量处理和文件上传功能
-- ✅ 完善平台管理接口
-- ✅ 优化错误处理和日志记录
-
-### v1.0.0
-- ✅ 基础 API 代理功能
-- ✅ 密钥管理和负载均衡
-- ✅ 统计分析和监控
-- ✅ 自动刷新机制
