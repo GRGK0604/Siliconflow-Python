@@ -9,6 +9,14 @@
 - 随机选择密钥转发请求，实现负载均衡
 - 完整的管理界面，包括密钥管理和使用日志
 - 支持流式响应
+- **🆕 支持多种AI接口**：
+  - OpenAI Chat Completions API
+  - Anthropic Messages API
+  - 文档重排序 (Rerank) API
+  - 图像生成 API
+  - 语音转文本 API
+  - 文本转语音 API
+  - 视频生成 API
 
 ## 使用方法
 
@@ -95,6 +103,30 @@ docker-compose up -d
 ```
 
 服务将在 http://localhost:7898 上可用。
+
+## 🚀 支持的API接口
+
+### 文本生成
+- **OpenAI Chat Completions**: `POST /v1/chat/completions`
+- **Anthropic Messages**: `POST /v1/messages`
+- **文档嵌入**: `POST /v1/embeddings`
+- **文档重排序**: `POST /v1/rerank`
+
+### 多媒体生成
+- **图像生成**: `POST /v1/images/generations`
+- **语音转文本**: `POST /v1/audio/transcriptions`
+- **文本转语音**: `POST /v1/audio/speech`
+- **视频生成**: `POST /v1/videos/generations`
+- **视频状态查询**: `GET /v1/videos/{video_id}`
+
+### 系统接口
+- **模型列表**: `GET /v1/models`
+
+详细的API使用说明请参考 [NEW_AI_APIS.md](./NEW_AI_APIS.md)
+
+## 🧪 测试新接口
+
+你可以使用curl或任何HTTP客户端来测试新接口。详细的API使用说明请参考 [NEW_AI_APIS.md](./NEW_AI_APIS.md)
 
 ## 示例
 - 登录页

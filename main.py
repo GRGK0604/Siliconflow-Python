@@ -20,9 +20,12 @@ import aiosqlite
 # Import our new modules
 from db import AsyncDBPool, DB_PATH
 from models import (
-    LoginRequest, APIKeyImport, APIKeyInfo, APIKeyResponse, LogEntry, 
+    LoginRequest, APIKeyImport, APIKeyInfo, APIKeyResponse, LogEntry,
     LogsResponse, StatsResponse, MessageResponse, ErrorResponse, ChatCompletionRequest,
-    APIKeyRefresh
+    APIKeyRefresh, AnthropicMessagesRequest, RerankRequest, RerankResponse,
+    ImageGenerationRequest, ImageGenerationResponse, AudioTranscriptionRequest,
+    AudioTranscriptionResponse, TextToSpeechRequest, VideoGenerationRequest,
+    VideoGenerationResponse, VideoStatusResponse
 )
 from utils import (
     validate_key_async, generate_session_id, invalidate_stats_cache, 
@@ -739,24 +742,24 @@ async def embeddings(request: Request, background_tasks: BackgroundTasks):
         request_api_key = request.headers.get("Authorization")
         if request_api_key != f"Bearer {API_KEY}":
             raise HTTPException(status_code=403, detail="无效的API_KEY")
-    
+
     # Get a key from the pool
     db = await AsyncDBPool.get_instance()
     keys = await db.get_key_list()
-    
+
     if not keys:
         raise HTTPException(status_code=500, detail="没有可用的api-key")
-    
+
     # Choose a random key
     selected = random.choice(keys)
-    
+
     # Update usage count
     background_tasks.add_task(db.increment_key_usage, selected)
-    
+
     # Forward the request
     forward_headers = dict(request.headers)
     forward_headers["Authorization"] = f"Bearer {selected}"
-    
+
     try:
         from utils import get_session
         session = await get_session()
@@ -772,22 +775,223 @@ async def embeddings(request: Request, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=f"请求转发失败: {str(e)}")
 
 
+@app.post("/v1/messages")
+async def anthropic_messages(request: Request, background_tasks: BackgroundTasks):
+    """Anthropic Messages API endpoint"""
+    # Check API_KEY if configured
+    if API_KEY is not None:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=401,
+                detail="未提供有效的 API 密钥",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        api_key = auth_header.replace("Bearer ", "").strip()
+        if api_key != API_KEY:
+            raise HTTPException(status_code=401, detail="无效的 API 密钥")
+
+    # Get and validate available keys
+    db = await AsyncDBPool.get_instance()
+    keys = await db.get_best_keys(limit=10)
+
+    if not keys:
+        raise HTTPException(status_code=500, detail="没有可用的API密钥")
+
+    # Randomly select from top 10 keys with highest balance
+    selected_key = random.choice(keys)
+
+    # Update usage count
+    background_tasks.add_task(db.increment_key_usage, selected_key)
+
+    # Parse request body
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="无效的JSON请求体")
+
+    # Get model name
+    model = body.get("model", "")
+    if not model:
+        raise HTTPException(status_code=400, detail="缺少模型参数")
+
+    # Record request time
+    call_time_stamp = time.time()
+
+    # Check if it's a streaming request
+    is_stream = body.get("stream", False)
+
+    # Prepare headers for forwarding
+    headers = {
+        "Authorization": f"Bearer {selected_key}",
+        "Content-Type": "application/json",
+    }
+
+    if is_stream:
+        # Process streaming response
+        async def stream_with_logging():
+            """Wrap streaming to add background task for logging at the end"""
+            input_tokens = 0
+            output_tokens = 0
+            total_tokens = 0
+
+            async for chunk in stream_response(selected_key, "/v1/messages", body, headers):
+                yield chunk
+
+                # Try to extract token info from the chunk
+                try:
+                    chunk_str = chunk.decode('utf-8')
+                    if chunk_str.startswith('data: ') and 'usage' in chunk_str:
+                        data = json.loads(chunk_str[6:])
+                        usage = data.get('usage', {})
+                        if usage:
+                            input_tokens = usage.get('input_tokens', 0)
+                            output_tokens = usage.get('output_tokens', 0)
+                            total_tokens = input_tokens + output_tokens
+                except:
+                    pass
+
+            # Log the completion
+            background_tasks.add_task(
+                db.log_completion,
+                selected_key,
+                model,
+                call_time_stamp,
+                input_tokens,
+                output_tokens,
+                total_tokens
+            )
+
+        return StreamingResponse(
+            stream_with_logging(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
+    else:
+        # Process non-streaming response
+        try:
+            status, response_data = await make_api_request(
+                "/v1/messages",
+                selected_key,
+                method="POST",
+                data=body,
+                timeout=120
+            )
+
+            if status != 200:
+                raise HTTPException(status_code=status, detail=response_data.get("error", "API request failed"))
+
+            # Calculate token usage
+            usage = response_data.get("usage", {})
+            input_tokens = usage.get("input_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0)
+            total_tokens = input_tokens + output_tokens
+
+            # Log usage
+            background_tasks.add_task(
+                db.log_completion,
+                selected_key,
+                model,
+                call_time_stamp,
+                input_tokens,
+                output_tokens,
+                total_tokens
+            )
+
+            return JSONResponse(response_data)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"请求处理失败: {str(e)}")
+
+
+@app.post("/v1/rerank")
+async def rerank(request: Request, background_tasks: BackgroundTasks):
+    """Rerank API endpoint"""
+    # Check API_KEY if configured
+    if API_KEY is not None:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=401,
+                detail="未提供有效的 API 密钥",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        api_key = auth_header.replace("Bearer ", "").strip()
+        if api_key != API_KEY:
+            raise HTTPException(status_code=401, detail="无效的 API 密钥")
+
+    # Get a key from the pool
+    db = await AsyncDBPool.get_instance()
+    keys = await db.get_key_list()
+
+    if not keys:
+        raise HTTPException(status_code=500, detail="没有可用的API密钥")
+
+    # Choose a random key
+    selected_key = random.choice(keys)
+
+    # Update usage count
+    background_tasks.add_task(db.increment_key_usage, selected_key)
+
+    # Parse request body
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="无效的JSON请求体")
+
+    # Get model name
+    model = body.get("model", "")
+    if not model:
+        raise HTTPException(status_code=400, detail="缺少模型参数")
+
+    # Prepare headers for forwarding
+    headers = {
+        "Authorization": f"Bearer {selected_key}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        status, response_data = await make_api_request(
+            "/v1/rerank",
+            selected_key,
+            method="POST",
+            data=body,
+            timeout=60
+        )
+
+        if status != 200:
+            raise HTTPException(status_code=status, detail=response_data.get("error", "API request failed"))
+
+        return JSONResponse(response_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"请求处理失败: {str(e)}")
+
+
 @app.get("/v1/models")
 async def list_models(request: Request):
     # Get a key from the pool
     db = await AsyncDBPool.get_instance()
     keys = await db.get_key_list()
-    
+
     if not keys:
         raise HTTPException(status_code=500, detail="没有可用的api-key")
-    
+
     # Choose a random key
     selected = random.choice(keys)
-    
+
     # Forward the request
     forward_headers = dict(request.headers)
     forward_headers["Authorization"] = f"Bearer {selected}"
-    
+
     try:
         from utils import get_session
         session = await get_session()
@@ -798,6 +1002,373 @@ async def list_models(request: Request):
             return JSONResponse(content=data, status_code=resp.status)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"请求转发失败: {str(e)}")
+
+
+@app.post("/v1/images/generations")
+async def image_generations(request: Request, background_tasks: BackgroundTasks):
+    """Image generation API endpoint"""
+    # Check API_KEY if configured
+    if API_KEY is not None:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=401,
+                detail="未提供有效的 API 密钥",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        api_key = auth_header.replace("Bearer ", "").strip()
+        if api_key != API_KEY:
+            raise HTTPException(status_code=401, detail="无效的 API 密钥")
+
+    # Get a key from the pool
+    db = await AsyncDBPool.get_instance()
+    keys = await db.get_key_list()
+
+    if not keys:
+        raise HTTPException(status_code=500, detail="没有可用的API密钥")
+
+    # Choose a random key
+    selected_key = random.choice(keys)
+
+    # Update usage count
+    background_tasks.add_task(db.increment_key_usage, selected_key)
+
+    # Parse request body
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="无效的JSON请求体")
+
+    # Get model name
+    model = body.get("model", "")
+    if not model:
+        raise HTTPException(status_code=400, detail="缺少模型参数")
+
+    # Record request time
+    call_time_stamp = time.time()
+
+    # Prepare headers for forwarding
+    headers = {
+        "Authorization": f"Bearer {selected_key}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        status, response_data = await make_api_request(
+            "/v1/images/generations",
+            selected_key,
+            method="POST",
+            data=body,
+            timeout=180  # Image generation can take longer
+        )
+
+        if status != 200:
+            raise HTTPException(status_code=status, detail=response_data.get("error", "API request failed"))
+
+        # Log the image generation (treat as 1 token for simplicity)
+        background_tasks.add_task(
+            db.log_completion,
+            selected_key,
+            model,
+            call_time_stamp,
+            1,  # input_tokens
+            1,  # output_tokens
+            2   # total_tokens
+        )
+
+        return JSONResponse(response_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"请求处理失败: {str(e)}")
+
+
+@app.post("/v1/audio/transcriptions")
+async def audio_transcriptions(request: Request, background_tasks: BackgroundTasks):
+    """Audio transcription API endpoint"""
+    # Check API_KEY if configured
+    if API_KEY is not None:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=401,
+                detail="未提供有效的 API 密钥",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        api_key = auth_header.replace("Bearer ", "").strip()
+        if api_key != API_KEY:
+            raise HTTPException(status_code=401, detail="无效的 API 密钥")
+
+    # Get a key from the pool
+    db = await AsyncDBPool.get_instance()
+    keys = await db.get_key_list()
+
+    if not keys:
+        raise HTTPException(status_code=500, detail="没有可用的API密钥")
+
+    # Choose a random key
+    selected_key = random.choice(keys)
+
+    # Update usage count
+    background_tasks.add_task(db.increment_key_usage, selected_key)
+
+    # Record request time
+    call_time_stamp = time.time()
+
+    # Prepare headers for forwarding (excluding content-type for multipart)
+    forward_headers = dict(request.headers)
+    forward_headers["Authorization"] = f"Bearer {selected_key}"
+
+    try:
+        from utils import get_session
+        session = await get_session()
+
+        # Forward the multipart form data directly
+        async with session.post(
+            f"{BASE_URL}/v1/audio/transcriptions",
+            headers=forward_headers,
+            data=await request.body(),
+            timeout=aiohttp.ClientTimeout(total=120),
+        ) as resp:
+            response_data = await resp.json()
+
+            if resp.status != 200:
+                raise HTTPException(status_code=resp.status, detail=response_data.get("error", "API request failed"))
+
+            # Log the transcription (treat as 1 token for simplicity)
+            background_tasks.add_task(
+                db.log_completion,
+                selected_key,
+                "whisper",  # Default model name for transcription
+                call_time_stamp,
+                1,  # input_tokens
+                1,  # output_tokens
+                2   # total_tokens
+            )
+
+            return JSONResponse(content=response_data, status_code=resp.status)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"请求处理失败: {str(e)}")
+
+
+@app.post("/v1/audio/speech")
+async def text_to_speech(request: Request, background_tasks: BackgroundTasks):
+    """Text-to-speech API endpoint"""
+    # Check API_KEY if configured
+    if API_KEY is not None:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=401,
+                detail="未提供有效的 API 密钥",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        api_key = auth_header.replace("Bearer ", "").strip()
+        if api_key != API_KEY:
+            raise HTTPException(status_code=401, detail="无效的 API 密钥")
+
+    # Get a key from the pool
+    db = await AsyncDBPool.get_instance()
+    keys = await db.get_key_list()
+
+    if not keys:
+        raise HTTPException(status_code=500, detail="没有可用的API密钥")
+
+    # Choose a random key
+    selected_key = random.choice(keys)
+
+    # Update usage count
+    background_tasks.add_task(db.increment_key_usage, selected_key)
+
+    # Parse request body
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="无效的JSON请求体")
+
+    # Get model name
+    model = body.get("model", "tts-1")
+
+    # Record request time
+    call_time_stamp = time.time()
+
+    # Prepare headers for forwarding
+    headers = {
+        "Authorization": f"Bearer {selected_key}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        from utils import get_session
+        session = await get_session()
+
+        async with session.post(
+            f"{BASE_URL}/v1/audio/speech",
+            headers=headers,
+            json=body,
+            timeout=aiohttp.ClientTimeout(total=120),
+        ) as resp:
+            if resp.status != 200:
+                error_data = await resp.json()
+                raise HTTPException(status_code=resp.status, detail=error_data.get("error", "API request failed"))
+
+            # Log the TTS generation (treat as 1 token for simplicity)
+            background_tasks.add_task(
+                db.log_completion,
+                selected_key,
+                model,
+                call_time_stamp,
+                1,  # input_tokens
+                1,  # output_tokens
+                2   # total_tokens
+            )
+
+            # Return the audio content
+            audio_content = await resp.read()
+            return Response(
+                content=audio_content,
+                media_type="audio/mpeg",
+                headers={"Content-Disposition": "attachment; filename=speech.mp3"}
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"请求处理失败: {str(e)}")
+
+
+@app.post("/v1/videos/generations")
+async def video_generations(request: Request, background_tasks: BackgroundTasks):
+    """Video generation API endpoint"""
+    # Check API_KEY if configured
+    if API_KEY is not None:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=401,
+                detail="未提供有效的 API 密钥",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        api_key = auth_header.replace("Bearer ", "").strip()
+        if api_key != API_KEY:
+            raise HTTPException(status_code=401, detail="无效的 API 密钥")
+
+    # Get a key from the pool
+    db = await AsyncDBPool.get_instance()
+    keys = await db.get_key_list()
+
+    if not keys:
+        raise HTTPException(status_code=500, detail="没有可用的API密钥")
+
+    # Choose a random key
+    selected_key = random.choice(keys)
+
+    # Update usage count
+    background_tasks.add_task(db.increment_key_usage, selected_key)
+
+    # Parse request body
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="无效的JSON请求体")
+
+    # Get model name
+    model = body.get("model", "")
+    if not model:
+        raise HTTPException(status_code=400, detail="缺少模型参数")
+
+    # Record request time
+    call_time_stamp = time.time()
+
+    # Prepare headers for forwarding
+    headers = {
+        "Authorization": f"Bearer {selected_key}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        status, response_data = await make_api_request(
+            "/v1/videos/generations",
+            selected_key,
+            method="POST",
+            data=body,
+            timeout=300  # Video generation can take very long
+        )
+
+        if status != 200:
+            raise HTTPException(status_code=status, detail=response_data.get("error", "API request failed"))
+
+        # Log the video generation (treat as 10 tokens for complexity)
+        background_tasks.add_task(
+            db.log_completion,
+            selected_key,
+            model,
+            call_time_stamp,
+            10,  # input_tokens
+            10,  # output_tokens
+            20   # total_tokens
+        )
+
+        return JSONResponse(response_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"请求处理失败: {str(e)}")
+
+
+@app.get("/v1/videos/{video_id}")
+async def get_video_status(video_id: str, request: Request):
+    """Get video generation status"""
+    # Check API_KEY if configured
+    if API_KEY is not None:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=401,
+                detail="未提供有效的 API 密钥",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        api_key = auth_header.replace("Bearer ", "").strip()
+        if api_key != API_KEY:
+            raise HTTPException(status_code=401, detail="无效的 API 密钥")
+
+    # Get a key from the pool
+    db = await AsyncDBPool.get_instance()
+    keys = await db.get_key_list()
+
+    if not keys:
+        raise HTTPException(status_code=500, detail="没有可用的API密钥")
+
+    # Choose a random key
+    selected_key = random.choice(keys)
+
+    # Prepare headers for forwarding
+    headers = {
+        "Authorization": f"Bearer {selected_key}",
+    }
+
+    try:
+        status, response_data = await make_api_request(
+            f"/v1/videos/{video_id}",
+            selected_key,
+            method="GET",
+            timeout=30
+        )
+
+        if status != 200:
+            raise HTTPException(status_code=status, detail=response_data.get("error", "API request failed"))
+
+        return JSONResponse(response_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"请求处理失败: {str(e)}")
 
 
 @app.get("/api/stats/overview")
